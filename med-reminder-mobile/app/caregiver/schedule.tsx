@@ -41,6 +41,10 @@ export default function CaregiverSchedule() {
   const [loading, setLoading] = useState(true);
   const [showDropdown, setShowDropdown] = useState(false);
 
+  const [selectedSchedule, setSelectedSchedule] =
+    useState<Schedule | null>(null);
+  const [showDetail, setShowDetail] = useState(false);
+
   /* ---------- load elderly ---------- */
   const fetchElderly = async () => {
     const token = await AsyncStorage.getItem("token");
@@ -69,6 +73,35 @@ export default function CaregiverSchedule() {
     );
 
     setSchedules(res.data.items || []);
+  };
+
+  /* ---------- delete ---------- */
+  const handleDelete = async (scheduleId: number) => {
+    Alert.alert("ยืนยันการลบ", "ต้องการลบรายการนี้หรือไม่?", [
+      { text: "ยกเลิก", style: "cancel" },
+      {
+        text: "ลบ",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            const token = await AsyncStorage.getItem("token");
+
+            await axios.delete(
+              `${API_BASE_URL}/caregiver/schedules/${scheduleId}`,
+              {
+                headers: { Authorization: `Bearer ${token}` },
+              }
+            );
+
+            setShowDetail(false);
+            await fetchSchedules(selectedElderly!.id);
+            Alert.alert("ลบสำเร็จ");
+          } catch {
+            Alert.alert("ลบไม่สำเร็จ");
+          }
+        },
+      },
+    ]);
   };
 
   /* ---------- reload when focus ---------- */
@@ -125,7 +158,6 @@ export default function CaregiverSchedule() {
           <Ionicons name="chevron-down" size={16} />
         </Pressable>
 
-        {/* 🔥 ปุ่ม + เปลี่ยนเป็น navigate */}
         <Pressable
           style={[
             styles.addBtn,
@@ -154,7 +186,13 @@ export default function CaregiverSchedule() {
           data={schedules}
           keyExtractor={(item) => item.id.toString()}
           renderItem={({ item }) => (
-            <View style={styles.card}>
+            <Pressable
+              style={styles.card}
+              onPress={() => {
+                setSelectedSchedule(item);
+                setShowDetail(true);
+              }}
+            >
               <Ionicons name="medical" size={22} color="#2563EB" />
               <View style={{ marginLeft: 10, flex: 1 }}>
                 <Text style={styles.medName}>
@@ -167,12 +205,12 @@ export default function CaregiverSchedule() {
                   เวลา: {item.time_hhmm}
                 </Text>
               </View>
-            </View>
+            </Pressable>
           )}
         />
       )}
 
-      {/* ===== Dropdown Modal (เก็บไว้) ===== */}
+      {/* ===== Dropdown Modal ===== */}
       <Modal visible={showDropdown} transparent animationType="fade">
         <Pressable
           style={styles.overlay}
@@ -194,6 +232,72 @@ export default function CaregiverSchedule() {
           </View>
         </Pressable>
       </Modal>
+
+      {/* ===== Detail Modal ===== */}
+      <Modal visible={showDetail} transparent animationType="slide">
+        <View style={styles.detailOverlay}>
+          <View style={styles.detailBox}>
+
+            <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+              <Text style={styles.detailTitle}>
+                {selectedSchedule?.medication_name}
+              </Text>
+
+              <View style={{ flexDirection: "row" }}>
+                <Pressable
+                  style={{ marginRight: 12 }}
+                  onPress={() => {
+                    setShowDetail(false);
+                    router.push({
+                      pathname: "/caregiver/(stack)/add-schedule",
+                      params: {
+                        editMode: "true",
+                        scheduleId: selectedSchedule?.id,
+                      },
+                    });
+                  }}
+                >
+                  <Ionicons name="create-outline" size={22} />
+                </Pressable>
+
+                <Pressable
+                  onPress={() =>
+                    selectedSchedule &&
+                    handleDelete(selectedSchedule.id)
+                  }
+                >
+                  <Ionicons name="trash-outline" size={22} color="red" />
+                </Pressable>
+              </View>
+            </View>
+
+            {selectedSchedule?.dosage && (
+              <Text style={{ marginTop: 10 }}>
+                ขนาดยา: {selectedSchedule.dosage}
+              </Text>
+            )}
+
+            <Text style={{ marginTop: 10 }}>
+              เวลา: {selectedSchedule?.time_hhmm}
+            </Text>
+
+            {selectedSchedule?.notes && (
+              <Text style={{ marginTop: 10 }}>
+                หมายเหตุ: {selectedSchedule.notes}
+              </Text>
+            )}
+
+            <Pressable
+              style={styles.closeBtn}
+              onPress={() => setShowDetail(false)}
+            >
+              <Text style={{ color: "white" }}>ปิด</Text>
+            </Pressable>
+
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 }
@@ -238,6 +342,7 @@ const styles = StyleSheet.create({
   },
   medName: { fontWeight: "700", fontSize: 16 },
   time: { marginTop: 6, fontWeight: "600" },
+
   overlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.3)",
@@ -250,5 +355,28 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   dropdownItem: { paddingVertical: 12 },
+
+  detailOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "center",
+    padding: 20,
+  },
+  detailBox: {
+    backgroundColor: "white",
+    borderRadius: 16,
+    padding: 20,
+  },
+  detailTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+  },
+  closeBtn: {
+    marginTop: 20,
+    backgroundColor: "#2563EB",
+    padding: 12,
+    borderRadius: 10,
+    alignItems: "center",
+  },
   center: { flex: 1, justifyContent: "center", alignItems: "center" },
 });
