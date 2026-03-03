@@ -8,6 +8,7 @@ import {
   ScrollView,
   Alert,
   Platform,
+  Modal,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
@@ -24,11 +25,18 @@ const formatTime = (date: Date) => {
   return `${hh}:${mm}`;
 };
 
-const todayString = () => {
-  const d = new Date();
-  return `${String(d.getDate()).padStart(2, "0")}/${String(
-    d.getMonth() + 1
-  ).padStart(2, "0")}/${d.getFullYear()}`;
+const formatDateDisplay = (date: Date) => {
+  const thMonths = [
+    "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
+    "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค.",
+  ];
+  return `${date.getDate()} ${thMonths[date.getMonth()]} ${date.getFullYear() + 543}`;
+};
+
+const formatDateAPI = (date: Date) => {
+  return `${String(date.getDate()).padStart(2, "0")}/${String(
+    date.getMonth() + 1
+  ).padStart(2, "0")}/${date.getFullYear()}`;
 };
 
 const weekDays = [
@@ -42,11 +50,129 @@ const weekDays = [
 ];
 
 const mealOptions = [
-  "ไม่ระบุ",
-  "ก่อนอาหาร",
-  "หลังอาหาร",
-  "พร้อมอาหาร",
+  { label: "ไม่ระบุ", icon: "remove-circle-outline" },
+  { label: "ก่อนอาหาร", icon: "time-outline" },
+  { label: "หลังอาหาร", icon: "checkmark-circle-outline" },
+  { label: "พร้อมอาหาร", icon: "fast-food-outline" },
 ];
+
+/* ---------------- Calendar Component ---------------- */
+
+const MiniCalendar = ({
+  selectedDate,
+  onSelect,
+  onClose,
+}: {
+  selectedDate: Date;
+  onSelect: (date: Date) => void;
+  onClose: () => void;
+}) => {
+  const [viewDate, setViewDate] = useState(new Date(selectedDate));
+
+  const thMonths = [
+    "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน",
+    "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม",
+    "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม",
+  ];
+
+  const year = viewDate.getFullYear();
+  const month = viewDate.getMonth();
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  const cells: (number | null)[] = [];
+  for (let i = 0; i < firstDay; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const prevMonth = () => {
+    const d = new Date(viewDate);
+    d.setMonth(d.getMonth() - 1);
+    setViewDate(d);
+  };
+
+  const nextMonth = () => {
+    const d = new Date(viewDate);
+    d.setMonth(d.getMonth() + 1);
+    setViewDate(d);
+  };
+
+  return (
+    <Modal transparent animationType="fade">
+      <Pressable style={cal.overlay} onPress={onClose}>
+        <Pressable style={cal.card} onPress={(e) => e.stopPropagation()}>
+          {/* Month nav */}
+          <View style={cal.navRow}>
+            <Pressable onPress={prevMonth} style={cal.navBtn}>
+              <Ionicons name="chevron-back" size={20} color="#1D4ED8" />
+            </Pressable>
+            <Text style={cal.monthLabel}>
+              {thMonths[month]} {year + 543}
+            </Text>
+            <Pressable onPress={nextMonth} style={cal.navBtn}>
+              <Ionicons name="chevron-forward" size={20} color="#1D4ED8" />
+            </Pressable>
+          </View>
+
+          {/* Day headers */}
+          <View style={cal.weekHeader}>
+            {["อา", "จ", "อ", "พ", "พฤ", "ศ", "ส"].map((d) => (
+              <Text key={d} style={cal.weekLabel}>{d}</Text>
+            ))}
+          </View>
+
+          {/* Cells */}
+          <View style={cal.grid}>
+            {cells.map((day, i) => {
+              if (!day) return <View key={`e-${i}`} style={cal.cell} />;
+              const cellDate = new Date(year, month, day);
+              cellDate.setHours(0, 0, 0, 0);
+              const isSelected =
+                cellDate.toDateString() === selectedDate.toDateString();
+              const isToday = cellDate.toDateString() === today.toDateString();
+              const isPast = cellDate < today;
+
+              return (
+                <Pressable
+                  key={day}
+                  style={[
+                    cal.cell,
+                    isSelected && cal.cellSelected,
+                    isToday && !isSelected && cal.cellToday,
+                  ]}
+                  onPress={() => {
+                    if (!isPast || isToday) {
+                      onSelect(cellDate);
+                      onClose();
+                    }
+                  }}
+                >
+                  <Text
+                    style={[
+                      cal.cellText,
+                      isSelected && cal.cellTextSelected,
+                      isPast && !isToday && cal.cellTextPast,
+                    ]}
+                  >
+                    {day}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <Pressable style={cal.closeBtn} onPress={onClose}>
+            <Text style={{ color: "#6B7280", fontSize: 14 }}>ปิด</Text>
+          </Pressable>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+};
+
+/* ---------------- Main Component ---------------- */
 
 export default function AddSchedule() {
   const { elderlyId, elderlyName } = useLocalSearchParams<{
@@ -57,9 +183,9 @@ export default function AddSchedule() {
   const [name, setName] = useState("");
   const [dosage, setDosage] = useState("");
   const [notes, setNotes] = useState("");
-  const [startDate] = useState(todayString());
+  const [startDate, setStartDate] = useState(new Date());
+  const [showCalendar, setShowCalendar] = useState(false);
 
-  // เริ่มต้นมีเวลา 1 เวลาเลย
   const [times, setTimes] = useState<Date[]>([new Date()]);
   const [showPickerIndex, setShowPickerIndex] = useState<number | null>(null);
 
@@ -72,7 +198,6 @@ export default function AddSchedule() {
 
   const validate = () => {
     let newErrors: any = {};
-
     if (!name.trim()) newErrors.name = true;
     if (times.length === 0) newErrors.times = true;
 
@@ -83,20 +208,16 @@ export default function AddSchedule() {
     }
 
     setErrors(newErrors);
-
     if (Object.keys(newErrors).length > 0) {
       Alert.alert("กรอกข้อมูลไม่ครบ", "กรุณากรอกข้อมูลที่จำเป็น");
       return false;
     }
-
     return true;
   };
 
   /* ---------------- time ---------------- */
 
-  const addTime = () => {
-    setTimes([...times, new Date()]);
-  };
+  const addTime = () => setTimes([...times, new Date()]);
 
   const removeTime = (index: number) => {
     if (times.length === 1) {
@@ -110,34 +231,24 @@ export default function AddSchedule() {
 
   const updateTime = (event: any, selectedDate?: Date) => {
     if (showPickerIndex === null) return;
-
     if (selectedDate) {
       const copy = [...times];
       copy[showPickerIndex] = selectedDate;
       setTimes(copy);
     }
-
-    if (Platform.OS !== "ios") {
-      setShowPickerIndex(null);
-    }
+    if (Platform.OS !== "ios") setShowPickerIndex(null);
   };
 
   /* ---------------- days ---------------- */
 
   const toggleDay = (day: number) => {
-    if (selectedDays.includes(day)) {
-      setSelectedDays(selectedDays.filter((d) => d !== day));
-    } else {
-      setSelectedDays([...selectedDays, day]);
-    }
+    setSelectedDays((prev) =>
+      prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]
+    );
   };
 
   const toggleAllDays = () => {
-    if (selectedDays.length === 7) {
-      setSelectedDays([]);
-    } else {
-      setSelectedDays([0, 1, 2, 3, 4, 5, 6]);
-    }
+    setSelectedDays(selectedDays.length === 7 ? [] : [0, 1, 2, 3, 4, 5, 6]);
   };
 
   /* ---------------- save ---------------- */
@@ -147,6 +258,10 @@ export default function AddSchedule() {
 
     try {
       const token = await AsyncStorage.getItem("token");
+      if (!token) {
+        Alert.alert("Session หมดอายุ", "กรุณาเข้าสู่ระบบใหม่");
+        return;
+      }
 
       for (const time of times) {
         await axios.post(
@@ -158,22 +273,24 @@ export default function AddSchedule() {
             timeHHMM: formatTime(time),
             notes,
             daysOfWeek:
-              selectedDays.length === 0
-                ? [0, 1, 2, 3, 4, 5, 6]
-                : selectedDays,
+              selectedDays.length === 0 ? [0, 1, 2, 3, 4, 5, 6] : selectedDays,
             mealRelation,
-            startDate,
+            startDate: formatDateAPI(startDate),
           },
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          }
+          { headers: { Authorization: `Bearer ${token}` } }
         );
       }
 
-      Alert.alert("สำเร็จ", "เพิ่มรายการยาเรียบร้อย");
-      router.back();
+      Alert.alert("สำเร็จ ✓", "เพิ่มรายการยาเรียบร้อยแล้ว", [
+        {
+          text: "ตกลง",
+          onPress: () =>
+            router.replace({
+              pathname: "/caregiver/schedule",
+              params: { elderlyId, elderlyName },
+            }),
+        },
+      ]);
     } catch (err: any) {
       console.log(err.response?.data || err.message);
       Alert.alert("ผิดพลาด", "ไม่สามารถบันทึกได้");
@@ -183,147 +300,202 @@ export default function AddSchedule() {
   /* ---------------- UI ---------------- */
 
   return (
-    <View style={styles.container}>
-      <ScrollView showsVerticalScrollIndicator={false}>
+    <View style={s.container}>
+      {showCalendar && (
+        <MiniCalendar
+          selectedDate={startDate}
+          onSelect={setStartDate}
+          onClose={() => setShowCalendar(false)}
+        />
+      )}
 
-        <View style={styles.headerRow}>
-          <Pressable onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={24} />
-          </Pressable>
+      {/* Header */}
+      <View style={s.header}>
+        <Pressable style={s.backBtn} onPress={() => router.back()}>
+          <Ionicons name="arrow-back" size={20} color="#1D4ED8" />
+        </Pressable>
+        <View style={{ flex: 1, alignItems: "center" }}>
+          <Text style={s.headerTitle}>เพิ่มรายการยา</Text>
+          <View style={s.nameBadge}>
+            <Ionicons name="person" size={11} color="#1D4ED8" />
+            <Text style={s.headerSub}>{elderlyName}</Text>
+          </View>
+        </View>
+        <View style={{ width: 36 }} />
+      </View>
 
-          <View style={{ alignItems: "center" }}>
-            <Text style={styles.header}>เพิ่มรายการยา</Text>
-            <Text style={{ fontSize: 12 }}>{elderlyName}</Text>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+
+        {/* Card: ข้อมูลยา */}
+        <View style={s.card}>
+          <View style={s.cardTitleRow}>
+            <Ionicons name="medical" size={16} color="#1D4ED8" />
+            <Text style={s.cardTitle}>ข้อมูลยา</Text>
           </View>
 
-          <View style={{ width: 24 }} />
+          <Text style={s.label}>ชื่อยา <Text style={s.required}>*</Text></Text>
+          <TextInput
+            style={[s.input, errors.name && s.inputError]}
+            value={name}
+            onChangeText={setName}
+            placeholder="เช่น พาราเซตามอล"
+            placeholderTextColor="#9CA3AF"
+          />
+
+          <Text style={s.label}>ขนาดยา</Text>
+          <TextInput
+            style={s.input}
+            value={dosage}
+            onChangeText={setDosage}
+            placeholder="เช่น 1 เม็ด / 5 ml"
+            placeholderTextColor="#9CA3AF"
+          />
         </View>
 
-        <Text style={styles.label}>ชื่อยา *</Text>
-        <TextInput
-          style={[styles.input, errors.name && styles.errorInput]}
-          value={name}
-          onChangeText={setName}
-          placeholder="เช่น พาราเซตามอล"
-        />
-
-        <Text style={styles.label}>ขนาดยา</Text>
-        <TextInput
-          style={styles.input}
-          value={dosage}
-          onChangeText={setDosage}
-        />
-
-        <Text style={styles.label}>เวลาที่ต้องกิน *</Text>
-
-        {times.map((time, index) => (
-          <View key={index} style={styles.timeRow}>
-            <Pressable
-              style={[styles.input, { flex: 1 }]}
-              onPress={() => setShowPickerIndex(index)}
-            >
-              <Text>{formatTime(time)}</Text>
-            </Pressable>
-
-            <Pressable
-              style={styles.removeBtn}
-              onPress={() => removeTime(index)}
-            >
-              <Ionicons name="close" size={16} color="white" />
-            </Pressable>
-
-            {showPickerIndex === index && (
-              <DateTimePicker
-                value={time}
-                mode="time"
-                is24Hour={true}
-                display="default"
-                onChange={updateTime}
-              />
-            )}
+        {/* Card: เวลา */}
+        <View style={s.card}>
+          <View style={s.cardTitleRow}>
+            <Ionicons name="time" size={16} color="#1D4ED8" />
+            <Text style={s.cardTitle}>เวลาที่ต้องกิน <Text style={s.required}>*</Text></Text>
           </View>
-        ))}
 
-        <Pressable style={styles.addTimeBtn} onPress={addTime}>
-          <Ionicons name="add" size={16} />
-          <Text style={{ marginLeft: 6 }}>เพิ่มเวลา</Text>
-        </Pressable>
-
-        <Text style={styles.label}>เลือกวัน</Text>
-
-        <Pressable
-          style={[
-            styles.allDaysBtn,
-            selectedDays.length === 7 && { backgroundColor: "#1D4ED8" },
-          ]}
-          onPress={toggleAllDays}
-        >
-          <Text style={{ color: "white" }}>ทุกวัน</Text>
-        </Pressable>
-
-        <View style={styles.weekRow}>
-          {weekDays.map((day) => (
-            <Pressable
-              key={day.value}
-              style={[
-                styles.dayBtn,
-                selectedDays.includes(day.value) && styles.daySelected,
-              ]}
-              onPress={() => toggleDay(day.value)}
-            >
-              <Text
-                style={{
-                  color: selectedDays.includes(day.value)
-                    ? "white"
-                    : "black",
-                }}
+          {times.map((time, index) => (
+            <View key={index} style={s.timeRow}>
+              <Pressable
+                style={s.timeBox}
+                onPress={() => setShowPickerIndex(index)}
               >
-                {day.label}
-              </Text>
-            </Pressable>
+                <Ionicons name="alarm-outline" size={16} color="#1D4ED8" />
+                <Text style={s.timeText}>{formatTime(time)}</Text>
+              </Pressable>
+              <Pressable style={s.removeBtn} onPress={() => removeTime(index)}>
+                <Ionicons name="trash-outline" size={16} color="#EF4444" />
+              </Pressable>
+              {showPickerIndex === index && (
+                <DateTimePicker
+                  value={time}
+                  mode="time"
+                  is24Hour
+                  display="default"
+                  onChange={updateTime}
+                />
+              )}
+            </View>
           ))}
+
+          <Pressable style={s.addTimeBtn} onPress={addTime}>
+            <Ionicons name="add-circle" size={18} color="#1D4ED8" />
+            <Text style={s.addTimeText}>เพิ่มเวลา</Text>
+          </Pressable>
         </View>
 
-        <Text style={styles.label}>วันที่เริ่มต้น</Text>
-        <TextInput style={styles.input} value={startDate} editable={false} />
+        {/* Card: วัน */}
+        <View style={s.card}>
+          <View style={s.cardTitleRow}>
+            <Ionicons name="calendar" size={16} color="#1D4ED8" />
+            <Text style={s.cardTitle}>วันที่ต้องกิน</Text>
+          </View>
 
-        <Text style={styles.label}>เวลากินเทียบกับอาหาร</Text>
-
-        <View style={styles.mealRow}>
-          {mealOptions.map((item) => (
-            <Pressable
-              key={item}
-              style={[
-                styles.mealBtn,
-                mealRelation === item && styles.mealSelected,
-              ]}
-              onPress={() => setMealRelation(item)}
-            >
-              <Text
-                style={{
-                  color: mealRelation === item ? "white" : "black",
-                }}
-              >
-                {item}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-
-        <Text style={styles.label}>หมายเหตุ</Text>
-        <TextInput
-          style={styles.input}
-          value={notes}
-          onChangeText={setNotes}
-        />
-
-        <View style={styles.buttonRow}>
-          <Pressable style={styles.cancelBtn} onPress={() => router.back()}>
-            <Text>ยกเลิก</Text>
+          <Pressable
+            style={[s.allDaysBtn, selectedDays.length === 7 && s.allDaysActive]}
+            onPress={toggleAllDays}
+          >
+            <Ionicons
+              name={selectedDays.length === 7 ? "checkmark-circle" : "ellipse-outline"}
+              size={16}
+              color="white"
+            />
+            <Text style={s.allDaysText}>ทุกวัน</Text>
           </Pressable>
 
-          <Pressable style={styles.saveBtn} onPress={handleSave}>
-            <Text style={{ color: "white" }}>บันทึก</Text>
+          <View style={s.weekRow}>
+            {weekDays.map((day) => {
+              const active = selectedDays.includes(day.value);
+              return (
+                <Pressable
+                  key={day.value}
+                  style={[s.dayBtn, active && s.dayActive]}
+                  onPress={() => toggleDay(day.value)}
+                >
+                  <Text style={[s.dayText, active && s.dayTextActive]}>
+                    {day.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* Card: วันที่เริ่มต้น */}
+        <View style={s.card}>
+          <View style={s.cardTitleRow}>
+            <Ionicons name="today" size={16} color="#1D4ED8" />
+            <Text style={s.cardTitle}>วันที่เริ่มต้น</Text>
+          </View>
+
+          <Pressable style={s.dateBox} onPress={() => setShowCalendar(true)}>
+            <Ionicons name="calendar-outline" size={18} color="#1D4ED8" />
+            <Text style={s.dateText}>{formatDateDisplay(startDate)}</Text>
+            <Ionicons name="chevron-down" size={16} color="#9CA3AF" />
+          </Pressable>
+        </View>
+
+        {/* Card: มื้ออาหาร */}
+        <View style={s.card}>
+          <View style={s.cardTitleRow}>
+            <Ionicons name="restaurant" size={16} color="#1D4ED8" />
+            <Text style={s.cardTitle}>เวลาเทียบกับมื้ออาหาร</Text>
+          </View>
+
+          <View style={s.mealGrid}>
+            {mealOptions.map((item) => {
+              const active = mealRelation === item.label;
+              return (
+                <Pressable
+                  key={item.label}
+                  style={[s.mealBtn, active && s.mealActive]}
+                  onPress={() => setMealRelation(item.label)}
+                >
+                  <Ionicons
+                    name={item.icon as any}
+                    size={18}
+                    color={active ? "white" : "#6B7280"}
+                  />
+                  <Text style={[s.mealText, active && s.mealTextActive]}>
+                    {item.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* Card: หมายเหตุ */}
+        <View style={s.card}>
+          <View style={s.cardTitleRow}>
+            <Ionicons name="create-outline" size={16} color="#1D4ED8" />
+            <Text style={s.cardTitle}>หมายเหตุ</Text>
+          </View>
+          <TextInput
+            style={s.textarea}
+            value={notes}
+            onChangeText={setNotes}
+            placeholder="เช่น ห้ามบด / ต้องกินพร้อมน้ำมากๆ"
+            placeholderTextColor="#9CA3AF"
+            multiline
+            numberOfLines={3}
+            textAlignVertical="top"
+          />
+        </View>
+
+        {/* Buttons */}
+        <View style={s.btnRow}>
+          <Pressable style={s.cancelBtn} onPress={() => router.back()}>
+            <Text style={s.cancelText}>ยกเลิก</Text>
+          </Pressable>
+          <Pressable style={s.saveBtn} onPress={handleSave}>
+            <Ionicons name="checkmark" size={18} color="white" />
+            <Text style={s.saveText}>บันทึก</Text>
           </Pressable>
         </View>
 
@@ -334,95 +506,285 @@ export default function AddSchedule() {
 
 /* ---------------- styles ---------------- */
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F0F9FF", padding: 16 },
-  headerRow: {
+const s = StyleSheet.create({
+  container: { flex: 1, backgroundColor: "#F0F9FF" },
+
+  // Header
+  header: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 20,
-  },
-  header: { fontSize: 18, fontWeight: "800" },
-  label: { marginTop: 16, marginBottom: 6, fontWeight: "600" },
-  input: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 12,
     backgroundColor: "white",
+    borderBottomWidth: 1,
+    borderBottomColor: "#E0F0FF",
+  },
+  backBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: "#EFF6FF",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  headerTitle: { fontSize: 17, fontWeight: "700", color: "#1E3A5F" },
+  nameBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#EFF6FF",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 20,
+    marginTop: 3,
+    gap: 4,
+  },
+  headerSub: { fontSize: 11, color: "#1D4ED8", fontWeight: "600" },
+
+  // Card
+  card: {
+    backgroundColor: "white",
+    borderRadius: 16,
+    padding: 16,
+    marginHorizontal: 16,
+    marginTop: 12,
+    shadowColor: "#93C5FD",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  cardTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 12,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "#EFF6FF",
+  },
+  cardTitle: { fontSize: 14, fontWeight: "700", color: "#1E3A5F" },
+
+  // Input
+  label: { fontSize: 13, color: "#374151", marginBottom: 6, marginTop: 10, fontWeight: "500" },
+  required: { color: "#EF4444" },
+  input: {
+    backgroundColor: "#F8FAFC",
     borderRadius: 10,
     padding: 12,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
+    borderColor: "#E2E8F0",
+    fontSize: 14,
+    color: "#1E293B",
   },
-  errorInput: { borderColor: "red" },
-  timeRow: {
+  inputError: { borderColor: "#EF4444", backgroundColor: "#FFF5F5" },
+
+  // Time
+  timeRow: { flexDirection: "row", alignItems: "center", marginBottom: 8, gap: 8 },
+  timeBox: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 8,
+    backgroundColor: "#EFF6FF",
+    borderRadius: 10,
+    padding: 12,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
   },
+  timeText: { fontSize: 16, fontWeight: "700", color: "#1D4ED8" },
   removeBtn: {
-    marginLeft: 8,
-    backgroundColor: "#EF4444",
-    padding: 10,
-    borderRadius: 8,
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: "#FFF5F5",
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#FECACA",
   },
   addTimeBtn: {
     flexDirection: "row",
+    alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#E5E7EB",
-    padding: 12,
+    backgroundColor: "#EFF6FF",
     borderRadius: 10,
-    marginTop: 8,
+    padding: 10,
+    marginTop: 4,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+    borderStyle: "dashed",
   },
-  weekRow: {
+  addTimeText: { fontSize: 13, color: "#1D4ED8", fontWeight: "600" },
+
+  // Days
+  allDaysBtn: {
     flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#93C5FD",
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 10,
+    gap: 6,
   },
+  allDaysActive: { backgroundColor: "#1D4ED8" },
+  allDaysText: { color: "white", fontWeight: "700", fontSize: 14 },
+  weekRow: { flexDirection: "row", gap: 4 },
   dayBtn: {
     flex: 1,
-    padding: 10,
-    marginHorizontal: 2,
-    backgroundColor: "#E5E7EB",
+    paddingVertical: 10,
+    backgroundColor: "#F1F5F9",
     borderRadius: 8,
     alignItems: "center",
   },
-  daySelected: { backgroundColor: "#2563EB" },
-  allDaysBtn: {
-    backgroundColor: "#2563EB",
-    padding: 10,
-    borderRadius: 8,
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  mealRow: {
+  dayActive: { backgroundColor: "#2563EB" },
+  dayText: { fontSize: 12, fontWeight: "600", color: "#64748B" },
+  dayTextActive: { color: "white" },
+
+  // Date picker
+  dateBox: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    marginTop: 8,
+    alignItems: "center",
+    backgroundColor: "#EFF6FF",
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+    gap: 10,
   },
+  dateText: { flex: 1, fontSize: 15, color: "#1D4ED8", fontWeight: "600" },
+
+  // Meal
+  mealGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   mealBtn: {
-    backgroundColor: "#E5E7EB",
-    padding: 8,
-    borderRadius: 8,
-    marginRight: 6,
-    marginBottom: 6,
-  },
-  mealSelected: { backgroundColor: "#2563EB" },
-  buttonRow: {
     flexDirection: "row",
-    marginTop: 30,
-    marginBottom: 50,
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#F1F5F9",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
   },
+  mealActive: { backgroundColor: "#2563EB", borderColor: "#2563EB" },
+  mealText: { fontSize: 13, color: "#64748B", fontWeight: "500" },
+  mealTextActive: { color: "white", fontWeight: "600" },
+
+  // Textarea
+  textarea: {
+    backgroundColor: "#F8FAFC",
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    fontSize: 14,
+    color: "#1E293B",
+    minHeight: 80,
+  },
+
+  // Buttons
+  btnRow: { flexDirection: "row", marginHorizontal: 16, marginTop: 20, gap: 10 },
   cancelBtn: {
     flex: 1,
-    backgroundColor: "#E5E7EB",
+    backgroundColor: "white",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
     padding: 14,
-    borderRadius: 10,
+    borderRadius: 12,
     alignItems: "center",
-    marginRight: 8,
   },
+  cancelText: { color: "#64748B", fontWeight: "600", fontSize: 15 },
   saveBtn: {
-    flex: 1,
+    flex: 2,
     backgroundColor: "#2563EB",
     padding: 14,
-    borderRadius: 10,
+    borderRadius: 12,
     alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 6,
+    shadowColor: "#2563EB",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  saveText: { color: "white", fontWeight: "700", fontSize: 15 },
+});
+
+/* ---------------- Calendar styles ---------------- */
+
+const cal = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  card: {
+    backgroundColor: "white",
+    borderRadius: 20,
+    padding: 20,
+    width: 320,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.2,
+    shadowRadius: 16,
+    elevation: 10,
+  },
+  navRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 16,
+  },
+  navBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: "#EFF6FF",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  monthLabel: { fontSize: 16, fontWeight: "700", color: "#1E3A5F" },
+  weekHeader: {
+    flexDirection: "row",
+    marginBottom: 8,
+  },
+  weekLabel: {
+    flex: 1,
+    textAlign: "center",
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#93C5FD",
+  },
+  grid: { flexDirection: "row", flexWrap: "wrap" },
+  cell: {
+    width: `${100 / 7}%`,
+    aspectRatio: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  cellSelected: {
+    backgroundColor: "#2563EB",
+    borderRadius: 8,
+  },
+  cellToday: {
+    borderWidth: 1.5,
+    borderColor: "#2563EB",
+    borderRadius: 8,
+  },
+  cellText: { fontSize: 14, color: "#1E293B", fontWeight: "500" },
+  cellTextSelected: { color: "white", fontWeight: "700" },
+  cellTextPast: { color: "#CBD5E1" },
+  closeBtn: {
+    marginTop: 16,
+    alignItems: "center",
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#F1F5F9",
   },
 });
