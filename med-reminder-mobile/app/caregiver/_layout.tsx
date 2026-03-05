@@ -13,18 +13,15 @@ export default function CaregiverLayout() {
           ),
         }}
       />
-
       <Tabs.Screen
-  name="schedule"
-  options={{
-    title: "ตารางยา",
-    tabBarIcon: ({ color, size }) => (
-      <Ionicons name="time-outline" size={size} color={color} />
-    ),
-  }}
-/>
-
-
+        name="schedule"
+        options={{
+          title: "ตารางยา",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="time-outline" size={size} color={color} />
+          ),
+        }}
+      />
       <Tabs.Screen
         name="report"
         options={{
@@ -34,8 +31,6 @@ export default function CaregiverLayout() {
           ),
         }}
       />
-
-      {/* ❌ ซ่อน stack ทั้งก้อน */}
       <Tabs.Screen
         name="(stack)"
         options={{ href: null }}

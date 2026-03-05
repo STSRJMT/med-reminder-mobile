@@ -4,10 +4,11 @@ const auth = require("../middleware/auth");
 
 const router = express.Router();
 
+// ── แก้ให้ return ตัวเลข "0"-"6" ตรงกับที่ caregiver บันทึก ──
+// Frontend เก็บ days_of_week เป็น "0,1,2,3,4,5,6" (0=อาทิตย์, 1=จันทร์, ...)
 function toDowToken(dateStr) {
   const d = new Date(dateStr + "T00:00:00");
-  const map = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-  return map[d.getDay()];
+  return String(d.getDay()); // "0"=Sun, "1"=Mon, ..., "6"=Sat
 }
 
 // GET /elderly/today?date=YYYY-MM-DD
@@ -15,7 +16,7 @@ router.get("/today", auth(["elderly"]), async (req, res) => {
   const { date } = req.query;
   if (!date) return res.status(400).json({ message: "date required (YYYY-MM-DD)" });
 
-  const dow = toDowToken(date);
+  const dow = toDowToken(date); // เช่น "5" สำหรับวันศุกร์
 
   const [rows] = await db.query(
     `
@@ -37,7 +38,10 @@ router.get("/today", auth(["elderly"]), async (req, res) => {
     FROM schedules s
     JOIN medications m ON m.id = s.medication_id
     WHERE m.elderly_user_id = ?
-      AND (s.days_of_week IS NULL OR FIND_IN_SET(?, REPLACE(s.days_of_week,' ','')) > 0)
+      AND (
+        s.days_of_week IS NULL
+        OR FIND_IN_SET(?, REPLACE(s.days_of_week, ' ', '')) > 0
+      )
     ORDER BY s.time_hhmm ASC
     `,
     [req.user.id, date, req.user.id, dow]
@@ -81,4 +85,5 @@ router.get("/:elderlyId", auth, async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
+
 module.exports = router;

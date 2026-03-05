@@ -7,19 +7,37 @@ import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
+import { router } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { API_BASE_URL } from "../../src/config";
 
 /* ---------- Types ---------- */
 type Elderly = { id: number; name: string; age: number };
-type DrugStat = { name: string; taken: number; total: number; percentage: number };
-type ReportData = { taken: number; missed: number; skipped: number; adherence: number; drugs: DrugStat[] };
+type DrugStat = {
+  name: string;
+  taken: number;
+  totalFull: number;
+  totalSoFar: number;
+  percentage: number;
+  percentageSoFar: number;
+};
+type ReportData = {
+  taken: number;
+  late: number;
+  missed: number;
+  skipped: number;
+  adherence: number;
+  adherenceSoFar: number;
+  totalFull: number;
+  totalSoFar: number;
+  drugs: DrugStat[];
+};
 type TabType = "day" | "week" | "month";
 
 /* ---------- Helpers ---------- */
 const tabLabels: { key: TabType; label: string }[] = [
-  { key: "day", label: "รายวัน" },
-  { key: "week", label: "รายสัปดาห์" },
+  { key: "day",   label: "รายวัน" },
+  { key: "week",  label: "รายสัปดาห์" },
   { key: "month", label: "รายเดือน" },
 ];
 
@@ -39,14 +57,27 @@ const getAvatarColor = (id: number) => avatarColors[id % avatarColors.length];
 
 /* ========== Component ========== */
 export default function CaregiverReport() {
-  const [elderly, setElderly]           = useState<Elderly[]>([]);
-  const [selectedId, setSelectedId]     = useState<number | null>(null);
-  const [tab, setTab]                   = useState<TabType>("day");
-  const [report, setReport]             = useState<ReportData | null>(null);
-  const [loadingList, setLoadingList]   = useState(true);
+  const [elderly, setElderly]             = useState<Elderly[]>([]);
+  const [selectedId, setSelectedId]       = useState<number | null>(null);
+  const [tab, setTab]                     = useState<TabType>("day");
+  const [report, setReport]               = useState<ReportData | null>(null);
+  const [loadingList, setLoadingList]     = useState(true);
   const [loadingReport, setLoadingReport] = useState(false);
 
-  /* --- fetch elderly list --- */
+  const handleLogout = () => {
+    Alert.alert("ออกจากระบบ", "คุณต้องการออกจากระบบใช่หรือไม่?", [
+      { text: "ยกเลิก", style: "cancel" },
+      {
+        text: "ออกจากระบบ", style: "destructive",
+        onPress: async () => {
+          await AsyncStorage.removeItem("token");
+          await AsyncStorage.removeItem("user");
+          router.replace("/");
+        },
+      },
+    ]);
+  };
+
   const fetchElderly = async () => {
     try {
       const token = await AsyncStorage.getItem("token");
@@ -63,7 +94,6 @@ export default function CaregiverReport() {
     }
   };
 
-  /* --- fetch report --- */
   const fetchReport = async (id: number, t: TabType) => {
     setLoadingReport(true);
     setReport(null);
@@ -81,44 +111,34 @@ export default function CaregiverReport() {
     }
   };
 
-  useFocusEffect(useCallback(() => {
-    setLoadingList(true);
-    fetchElderly();
-  }, []));
+  useFocusEffect(useCallback(() => { setLoadingList(true); fetchElderly(); }, []));
+  useFocusEffect(useCallback(() => { if (selectedId !== null) fetchReport(selectedId, tab); }, [selectedId, tab]));
 
-  useFocusEffect(useCallback(() => {
-    if (selectedId !== null) fetchReport(selectedId, tab);
-  }, [selectedId, tab]));
-
-  /* ========== Loading ========== */
   if (loadingList) {
     return (
       <SafeAreaView style={s.root}>
-        <View style={s.center}>
-          <ActivityIndicator size="large" color="#2563EB" />
-        </View>
+        <View style={s.center}><ActivityIndicator size="large" color="#2563EB" /></View>
       </SafeAreaView>
     );
   }
 
-  /* ========== Render ========== */
   return (
     <SafeAreaView style={s.root}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
 
-        {/* Header */}
+        {/* ── Header ── */}
         <View style={s.header}>
           <View>
             <Text style={s.headerTitle}>รายงาน</Text>
             <Text style={s.headerSub}>สถิติและสรุปการกินยา</Text>
           </View>
-          <View style={s.headerIcon}>
-            <Ionicons name="bar-chart" size={22} color="#2563EB" />
-          </View>
+          {/* logout แทน icon เฉยๆ */}
+          <Pressable style={s.logoutBtn} onPress={handleLogout}>
+            <Ionicons name="log-out-outline" size={20} color="#EF4444" />
+          </Pressable>
         </View>
 
         {elderly.length === 0 ? (
-          /* Empty */
           <View style={s.emptyCard}>
             <Ionicons name="people-outline" size={52} color="#BFDBFE" />
             <Text style={s.emptyText}>ยังไม่มีผู้สูงอายุที่ดูแล</Text>
@@ -135,8 +155,7 @@ export default function CaregiverReport() {
                 return (
                   <Pressable key={e.id}
                     style={[s.chip, active && { borderColor: color, backgroundColor: color + "15" }]}
-                    onPress={() => setSelectedId(e.id)}
-                  >
+                    onPress={() => setSelectedId(e.id)}>
                     <View style={[s.chipAvatar, { backgroundColor: color }]}>
                       <Text style={s.chipAvatarText}>{e.name?.charAt(0)}</Text>
                     </View>
@@ -159,7 +178,6 @@ export default function CaregiverReport() {
               ))}
             </View>
 
-            {/* Report body */}
             {loadingReport ? (
               <View style={s.center}>
                 <ActivityIndicator size="large" color="#2563EB" />
@@ -170,10 +188,10 @@ export default function CaregiverReport() {
                 {/* Stat cards */}
                 <View style={s.statsGrid}>
                   {[
-                    { icon: "checkmark-circle", color: "#10B981", val: report.taken,   label: "กินแล้ว" },
-                    { icon: "close-circle",     color: "#EF4444", val: report.missed,  label: "ข้าม" },
-                    { icon: "time",             color: "#F59E0B", val: report.skipped, label: "ลืม" },
-                    { icon: "trending-up",      color: "#2563EB", val: `${report.adherence}%`, label: "สม่ำเสมอ" },
+                    { icon: "checkmark-circle", color: "#10B981", val: report.taken,                label: "กินแล้ว" },
+                    { icon: "time",             color: "#F59E0B", val: report.late,                 label: "กินล่าช้า" },
+                    { icon: "close-circle",     color: "#EF4444", val: report.missed,               label: "ข้าม" },
+                    { icon: "trending-up",      color: "#2563EB", val: `${report.adherenceSoFar}%`, label: "สม่ำเสมอ" },
                   ].map((item, i) => (
                     <View key={i} style={[s.statCard, { borderLeftColor: item.color }]}>
                       <Ionicons name={item.icon as any} size={22} color={item.color} />
@@ -190,34 +208,45 @@ export default function CaregiverReport() {
                     <Text style={s.cardTitle}>
                       อัตราการกิน{tab === "day" ? "วันนี้" : tab === "week" ? "สัปดาห์นี้" : "เดือนนี้"}
                     </Text>
-                    <Text style={[s.adherencePct, { color: adherenceColor(report.adherence) }]}>
-                      {report.adherence}%
+                    <Text style={[s.adherencePct, { color: adherenceColor(report.adherenceSoFar) }]}>
+                      {report.adherenceSoFar}%
+                      {tab !== "day" && report.totalFull !== report.totalSoFar
+                        ? ` (${report.adherence}%)` : ""}
                     </Text>
                   </View>
 
                   <Text style={s.adherenceDesc}>
-                    กินยาแล้ว {report.taken} จาก {report.taken + report.missed + report.skipped} ครั้ง
+                    {"กินยาแล้ว "}
+                    {report.taken}/{report.totalFull} ครั้ง
+                    {tab !== "day" && report.totalFull > report.totalSoFar
+                      ? ` · อีก ${report.totalFull - report.totalSoFar} ครั้งที่เหลือ` : ""}
+                    {report.late > 0 ? ` · ล่าช้า ${report.late} ครั้ง` : ""}
                   </Text>
 
                   <View style={s.progressBg}>
                     <View style={[s.progressFill, {
                       width: `${report.adherence}%` as any,
-                      backgroundColor: adherenceColor(report.adherence),
+                      backgroundColor: adherenceColor(report.adherence) + "50",
+                    }]} />
+                    <View style={[s.progressFill, {
+                      position: "absolute", top: 0, left: 0,
+                      width: `${report.adherenceSoFar}%` as any,
+                      backgroundColor: adherenceColor(report.adherenceSoFar),
                     }]} />
                   </View>
 
-                  <View style={[s.badge, { backgroundColor: adherenceBg(report.adherence) }]}>
+                  <View style={[s.badge, { backgroundColor: adherenceBg(report.adherenceSoFar) }]}>
                     <Ionicons
-                      name={report.adherence >= 80 ? "checkmark-circle" : report.adherence >= 50 ? "warning" : "alert-circle"}
-                      size={14} color={adherenceColor(report.adherence)}
+                      name={report.adherenceSoFar >= 80 ? "checkmark-circle" : report.adherenceSoFar >= 50 ? "warning" : "alert-circle"}
+                      size={14} color={adherenceColor(report.adherenceSoFar)}
                     />
-                    <Text style={[s.badgeText, { color: adherenceColor(report.adherence) }]}>
-                      {adherenceLabel(report.adherence)}
+                    <Text style={[s.badgeText, { color: adherenceColor(report.adherenceSoFar) }]}>
+                      {adherenceLabel(report.adherenceSoFar)}
                     </Text>
                   </View>
                 </View>
 
-                {/* Drug detail card */}
+                {/* Drug detail */}
                 <View style={s.card}>
                   <View style={s.cardTitleRow}>
                     <Ionicons name="medical" size={16} color="#1D4ED8" />
@@ -230,20 +259,29 @@ export default function CaregiverReport() {
                     report.drugs.map((drug, i) => (
                       <View key={i} style={[s.drugRow, i < report.drugs.length - 1 && s.drugBorder]}>
                         <View style={s.drugLeft}>
-                          <View style={[s.drugDot, { backgroundColor: adherenceColor(drug.percentage) }]} />
+                          <View style={[s.drugDot, { backgroundColor: adherenceColor(drug.percentageSoFar) }]} />
                           <View>
                             <Text style={s.drugName}>{drug.name}</Text>
-                            <Text style={s.drugSub}>กิน {drug.taken}/{drug.total} ครั้ง</Text>
+                            <Text style={s.drugSub}>
+                              กิน {drug.taken}/{drug.totalFull} ครั้ง
+                              {drug.totalFull > drug.totalSoFar
+                                ? ` · อีก ${drug.totalFull - drug.totalSoFar} ครั้ง` : ""}
+                            </Text>
                           </View>
                         </View>
                         <View style={s.drugRight}>
-                          <Text style={[s.drugPct, { color: adherenceColor(drug.percentage) }]}>
-                            {drug.percentage}%
+                          <Text style={[s.drugPct, { color: adherenceColor(drug.percentageSoFar) }]}>
+                            {drug.percentageSoFar}%
                           </Text>
                           <View style={s.drugBarBg}>
                             <View style={[s.drugBarFill, {
                               width: `${drug.percentage}%` as any,
-                              backgroundColor: adherenceColor(drug.percentage),
+                              backgroundColor: adherenceColor(drug.percentage) + "50",
+                            }]} />
+                            <View style={[s.drugBarFill, {
+                              position: "absolute", top: 0, left: 0,
+                              width: `${drug.percentageSoFar}%` as any,
+                              backgroundColor: adherenceColor(drug.percentageSoFar),
                             }]} />
                           </View>
                         </View>
@@ -262,57 +300,48 @@ export default function CaregiverReport() {
 
 /* ---------- Styles ---------- */
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: "#F0F9FF" },
-  center: { paddingVertical: 60, alignItems: "center" },
-  loadingText: { marginTop: 10, color: "#64748B", fontSize: 13 },
-
-  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 16, paddingVertical: 20 },
-  headerTitle: { fontSize: 26, fontWeight: "800", color: "#1E3A5F" },
-  headerSub: { fontSize: 13, color: "#64748B", marginTop: 2 },
-  headerIcon: { width: 46, height: 46, borderRadius: 14, backgroundColor: "#EFF6FF", justifyContent: "center", alignItems: "center" },
-
+  root:         { flex: 1, backgroundColor: "#F0F9FF" },
+  center:       { paddingVertical: 60, alignItems: "center" },
+  loadingText:  { marginTop: 10, color: "#64748B", fontSize: 13 },
+  header:       { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 16, paddingVertical: 20 },
+  headerTitle:  { fontSize: 26, fontWeight: "800", color: "#1E3A5F" },
+  headerSub:    { fontSize: 13, color: "#64748B", marginTop: 2 },
+  logoutBtn:    { width: 44, height: 44, borderRadius: 13, backgroundColor: "#FFF5F5", justifyContent: "center", alignItems: "center", borderWidth: 1, borderColor: "#FEE2E2" },
   sectionLabel: { fontSize: 13, fontWeight: "700", color: "#1D4ED8", marginHorizontal: 16, marginBottom: 10 },
-
-  chip: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: "white", borderRadius: 14, padding: 10, borderWidth: 1.5, borderColor: "#E2E8F0", shadowColor: "#93C5FD", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 6, elevation: 2 },
-  chipAvatar: { width: 36, height: 36, borderRadius: 10, justifyContent: "center", alignItems: "center" },
+  chip:         { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: "white", borderRadius: 14, padding: 10, borderWidth: 1.5, borderColor: "#E2E8F0", shadowColor: "#93C5FD", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 6, elevation: 2 },
+  chipAvatar:   { width: 36, height: 36, borderRadius: 10, justifyContent: "center", alignItems: "center" },
   chipAvatarText: { color: "white", fontWeight: "800", fontSize: 15 },
-  chipName: { fontSize: 14, fontWeight: "700", color: "#1E293B" },
-  chipAge: { fontSize: 11, color: "#94A3B8", marginTop: 1 },
-
-  tabRow: { flexDirection: "row", marginHorizontal: 16, marginTop: 16, marginBottom: 4, backgroundColor: "white", borderRadius: 12, padding: 4, shadowColor: "#93C5FD", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 6, elevation: 2 },
-  tabBtn: { flex: 1, paddingVertical: 8, alignItems: "center", borderRadius: 10 },
-  tabActive: { backgroundColor: "#2563EB" },
-  tabText: { fontSize: 13, fontWeight: "600", color: "#94A3B8" },
-  tabTextActive: { color: "white" },
-
-  statsGrid: { flexDirection: "row", flexWrap: "wrap", marginHorizontal: 16, marginTop: 16, gap: 10 },
-  statCard: { flex: 1, minWidth: "45%", backgroundColor: "white", borderRadius: 14, padding: 14, borderLeftWidth: 4, alignItems: "center", gap: 4, shadowColor: "#93C5FD", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 6, elevation: 2 },
-  statNum: { fontSize: 22, fontWeight: "800", color: "#1E293B" },
-  statLabel: { fontSize: 12, color: "#64748B", fontWeight: "500" },
-
-  card: { backgroundColor: "white", borderRadius: 16, padding: 16, marginHorizontal: 16, marginTop: 12, shadowColor: "#93C5FD", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 8, elevation: 2 },
+  chipName:     { fontSize: 14, fontWeight: "700", color: "#1E293B" },
+  chipAge:      { fontSize: 11, color: "#94A3B8", marginTop: 1 },
+  tabRow:       { flexDirection: "row", marginHorizontal: 16, marginTop: 16, marginBottom: 4, backgroundColor: "white", borderRadius: 12, padding: 4, shadowColor: "#93C5FD", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 6, elevation: 2 },
+  tabBtn:       { flex: 1, paddingVertical: 8, alignItems: "center", borderRadius: 10 },
+  tabActive:    { backgroundColor: "#2563EB" },
+  tabText:      { fontSize: 13, fontWeight: "600", color: "#94A3B8" },
+  tabTextActive:{ color: "white" },
+  statsGrid:    { flexDirection: "row", flexWrap: "wrap", marginHorizontal: 16, marginTop: 16, gap: 10 },
+  statCard:     { flex: 1, minWidth: "45%", backgroundColor: "white", borderRadius: 14, padding: 14, borderLeftWidth: 4, alignItems: "center", gap: 4, shadowColor: "#93C5FD", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 6, elevation: 2 },
+  statNum:      { fontSize: 22, fontWeight: "800", color: "#1E293B" },
+  statLabel:    { fontSize: 12, color: "#64748B", fontWeight: "500" },
+  card:         { backgroundColor: "white", borderRadius: 16, padding: 16, marginHorizontal: 16, marginTop: 12, shadowColor: "#93C5FD", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 8, elevation: 2 },
   cardTitleRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 10, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: "#EFF6FF" },
-  cardTitle: { flex: 1, fontSize: 14, fontWeight: "700", color: "#1E3A5F" },
-
+  cardTitle:    { flex: 1, fontSize: 14, fontWeight: "700", color: "#1E3A5F" },
   adherencePct: { fontSize: 16, fontWeight: "800" },
-  adherenceDesc: { fontSize: 12, color: "#64748B", marginBottom: 10 },
-  progressBg: { height: 10, backgroundColor: "#F1F5F9", borderRadius: 99, overflow: "hidden" },
+  adherenceDesc:{ fontSize: 12, color: "#64748B", marginBottom: 10 },
+  progressBg:   { height: 10, backgroundColor: "#F1F5F9", borderRadius: 99, overflow: "hidden" },
   progressFill: { height: "100%", borderRadius: 99 },
-  badge: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 12, padding: 10, borderRadius: 10 },
-  badgeText: { fontSize: 13, fontWeight: "600" },
-
-  drugRow: { flexDirection: "row", alignItems: "center", paddingVertical: 12, gap: 10 },
-  drugBorder: { borderBottomWidth: 1, borderBottomColor: "#F1F5F9" },
-  drugLeft: { flex: 1, flexDirection: "row", alignItems: "center", gap: 10 },
-  drugDot: { width: 10, height: 10, borderRadius: 5 },
-  drugName: { fontSize: 14, fontWeight: "600", color: "#1E293B" },
-  drugSub: { fontSize: 12, color: "#94A3B8", marginTop: 2 },
-  drugRight: { alignItems: "flex-end", gap: 4, minWidth: 80 },
-  drugPct: { fontSize: 14, fontWeight: "700" },
-  drugBarBg: { width: 80, height: 6, backgroundColor: "#F1F5F9", borderRadius: 99, overflow: "hidden" },
-  drugBarFill: { height: "100%", borderRadius: 99 },
-
-  emptyCard: { margin: 16, padding: 40, backgroundColor: "white", borderRadius: 16, alignItems: "center", gap: 12 },
-  emptyText: { fontSize: 15, color: "#94A3B8", fontWeight: "600" },
-  noDrug: { textAlign: "center", color: "#94A3B8", paddingVertical: 16, fontSize: 13 },
+  badge:        { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 12, padding: 10, borderRadius: 10 },
+  badgeText:    { fontSize: 13, fontWeight: "600" },
+  drugRow:      { flexDirection: "row", alignItems: "center", paddingVertical: 12, gap: 10 },
+  drugBorder:   { borderBottomWidth: 1, borderBottomColor: "#F1F5F9" },
+  drugLeft:     { flex: 1, flexDirection: "row", alignItems: "center", gap: 10 },
+  drugDot:      { width: 10, height: 10, borderRadius: 5 },
+  drugName:     { fontSize: 14, fontWeight: "600", color: "#1E293B" },
+  drugSub:      { fontSize: 12, color: "#94A3B8", marginTop: 2 },
+  drugRight:    { alignItems: "flex-end", gap: 4, minWidth: 80 },
+  drugPct:      { fontSize: 14, fontWeight: "700" },
+  drugBarBg:    { width: 80, height: 6, backgroundColor: "#F1F5F9", borderRadius: 99, overflow: "hidden" },
+  drugBarFill:  { height: "100%", borderRadius: 99 },
+  emptyCard:    { margin: 16, padding: 40, backgroundColor: "white", borderRadius: 16, alignItems: "center", gap: 12 },
+  emptyText:    { fontSize: 15, color: "#94A3B8", fontWeight: "600" },
+  noDrug:       { textAlign: "center", color: "#94A3B8", paddingVertical: 16, fontSize: 13 },
 });

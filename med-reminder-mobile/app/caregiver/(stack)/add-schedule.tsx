@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -9,9 +9,10 @@ import {
   Alert,
   Platform,
   Modal,
+  ActivityIndicator,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { router, useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams, useFocusEffect } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
 import { API_BASE_URL } from "../../../src/config";
@@ -34,10 +35,8 @@ const formatDateDisplay = (date: Date) => {
 };
 
 const formatDateAPI = (date: Date) => {
-  return `${String(date.getDate()).padStart(2, "0")}/${String(
-    date.getMonth() + 1
-  ).padStart(2, "0")}/${date.getFullYear()}`;
-};
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
 
 const weekDays = [
   { label: "อา", value: 0 },
@@ -103,7 +102,6 @@ const MiniCalendar = ({
     <Modal transparent animationType="fade">
       <Pressable style={cal.overlay} onPress={onClose}>
         <Pressable style={cal.card} onPress={(e) => e.stopPropagation()}>
-          {/* Month nav */}
           <View style={cal.navRow}>
             <Pressable onPress={prevMonth} style={cal.navBtn}>
               <Ionicons name="chevron-back" size={20} color="#1D4ED8" />
@@ -116,14 +114,12 @@ const MiniCalendar = ({
             </Pressable>
           </View>
 
-          {/* Day headers */}
           <View style={cal.weekHeader}>
             {["อา", "จ", "อ", "พ", "พฤ", "ศ", "ส"].map((d) => (
               <Text key={d} style={cal.weekLabel}>{d}</Text>
             ))}
           </View>
 
-          {/* Cells */}
           <View style={cal.grid}>
             {cells.map((day, i) => {
               if (!day) return <View key={`e-${i}`} style={cal.cell} />;
@@ -175,10 +171,19 @@ const MiniCalendar = ({
 /* ---------------- Main Component ---------------- */
 
 export default function AddSchedule() {
-  const { elderlyId, elderlyName } = useLocalSearchParams<{
-    elderlyId: string;
-    elderlyName: string;
-  }>();
+  const { elderlyId, elderlyName, editMode, scheduleId, scheduleIds } =
+    useLocalSearchParams<{
+      elderlyId: string;
+      elderlyName: string;
+      editMode: string;
+      scheduleId: string;
+      scheduleIds: string; // "1,2,3"
+    }>();
+
+  const isEdit = editMode === "true";
+
+  const [loadingData, setLoadingData] = useState(isEdit);
+  const [saving, setSaving] = useState(false);
 
   const [name, setName] = useState("");
   const [dosage, setDosage] = useState("");
@@ -189,10 +194,94 @@ export default function AddSchedule() {
   const [times, setTimes] = useState<Date[]>([new Date()]);
   const [showPickerIndex, setShowPickerIndex] = useState<number | null>(null);
 
+  // ✅ เก็บ scheduleIds เดิมจาก DB เรียงตาม index ตรงกับ times
+  const [editScheduleIds, setEditScheduleIds] = useState<number[]>([]);
+
   const [selectedDays, setSelectedDays] = useState<number[]>([]);
   const [mealRelation, setMealRelation] = useState("ไม่ระบุ");
 
   const [errors, setErrors] = useState<any>({});
+
+  /* --- โหลดข้อมูลเดิมถ้า edit mode --- */
+  useEffect(() => {
+    if (!isEdit || !scheduleId) return;
+
+    const load = async () => {
+      try {
+        const token = await AsyncStorage.getItem("token");
+
+        // โหลด medication info จาก scheduleId แรก
+        const res = await axios.get(
+          `${API_BASE_URL}/caregiver/schedules/${scheduleId}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        const d = res.data;
+
+        setName(d.medication_name || "");
+        setDosage(d.dosage || "");
+        setNotes(d.notes || "");
+        setMealRelation(d.meal_relation || "ไม่ระบุ");
+
+        if (d.days_of_week) {
+          const days = d.days_of_week
+            .split(",")
+            .map((v: string) => Number(v.trim()));
+          setSelectedDays(days);
+        }
+
+        // ✅ โหลดทุกเวลาจาก scheduleIds
+        if (scheduleIds) {
+          const ids = scheduleIds.split(",").map(Number);
+          setEditScheduleIds(ids);
+
+          const results = await Promise.all(
+            ids.map((id) =>
+              axios.get(`${API_BASE_URL}/caregiver/schedules/${id}`, {
+                headers: { Authorization: `Bearer ${token}` },
+              })
+            )
+          );
+
+          const allTimes = results.map((r) => {
+            const [hh, mm] = r.data.time_hhmm.split(":").map(Number);
+            const t = new Date();
+            t.setHours(hh, mm, 0, 0);
+            return t;
+          });
+
+          setTimes(allTimes);
+        } else {
+          // fallback: โหลดแค่เวลาเดียว
+          setEditScheduleIds([Number(scheduleId)]);
+          const [hh, mm] = d.time_hhmm.split(":").map(Number);
+          const t = new Date();
+          t.setHours(hh, mm, 0, 0);
+          setTimes([t]);
+        }
+      } catch {
+        Alert.alert("ผิดพลาด", "ไม่สามารถโหลดข้อมูลได้");
+      } finally {
+        setLoadingData(false);
+      }
+    };
+
+    load();
+  }, [scheduleId]);
+
+  // ✅ เพิ่ม useEffect นี้ — reset ทุก state เมื่อเป็น add mode
+  useFocusEffect(useCallback(() => {
+  if (!isEdit) {
+    setName("");
+    setDosage("");
+    setNotes("");
+    setStartDate(new Date());
+    setTimes([new Date()]);
+    setEditScheduleIds([]);
+    setSelectedDays([]);
+    setMealRelation("ไม่ระบุ");
+    setErrors({});
+  }
+}, [isEdit]));
 
   /* ---------------- validation ---------------- */
 
@@ -255,6 +344,7 @@ export default function AddSchedule() {
 
   const handleSave = async () => {
     if (!validate()) return;
+    setSaving(true);
 
     try {
       const token = await AsyncStorage.getItem("token");
@@ -263,41 +353,110 @@ export default function AddSchedule() {
         return;
       }
 
-      for (const time of times) {
-        await axios.post(
-          `${API_BASE_URL}/caregiver/schedules`,
-          {
-            elderlyUserId: Number(elderlyId),
-            name,
-            dosage,
-            timeHHMM: formatTime(time),
-            notes,
-            daysOfWeek:
-              selectedDays.length === 0 ? [0, 1, 2, 3, 4, 5, 6] : selectedDays,
-            mealRelation,
-            startDate: formatDateAPI(startDate),
-          },
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
+      const daysToSend =
+        selectedDays.length === 0 ? [0, 1, 2, 3, 4, 5, 6] : selectedDays;
+
+      if (isEdit && editScheduleIds.length > 0) {
+
+        // ✅ PUT เวลาที่ยังมีอยู่ (index ตรงกับ editScheduleIds)
+        for (let i = 0; i < times.length; i++) {
+          if (i < editScheduleIds.length) {
+            // อัพเดท schedule เดิม
+            await axios.put(
+              `${API_BASE_URL}/caregiver/schedules/${editScheduleIds[i]}`,
+              {
+                name,
+                dosage,
+                notes,
+                timeHHMM: formatTime(times[i]),
+                daysOfWeek: daysToSend,
+                mealRelation,
+              },
+              { headers: { Authorization: `Bearer ${token}` } }
+            );
+          } else {
+            // ✅ เวลาใหม่ที่ผู้ใช้เพิ่มเข้ามา (เกิน editScheduleIds) — POST
+            await axios.post(
+              `${API_BASE_URL}/caregiver/schedules`,
+              {
+                elderlyUserId: Number(elderlyId),
+                name,
+                dosage,
+                timeHHMM: formatTime(times[i]),
+                notes,
+                daysOfWeek: daysToSend,
+                mealRelation,
+              },
+              { headers: { Authorization: `Bearer ${token}` } }
+            );
+          }
+        }
+
+        // ✅ Bug fix: ลบ schedule ที่ผู้ใช้ลบออกไปใน UI
+        // เช่น มี 3 เวลาเดิม แต่ผู้ใช้ลบเหลือ 1 → DELETE scheduleIds[1] และ [2]
+        if (editScheduleIds.length > times.length) {
+          const idsToDelete = editScheduleIds.slice(times.length);
+          for (const sid of idsToDelete) {
+            await axios.delete(
+              `${API_BASE_URL}/caregiver/schedules/${sid}`,
+              { headers: { Authorization: `Bearer ${token}` } }
+            );
+          }
+        }
+
+      } else {
+        // ✅ Create mode — POST ทีละเวลา
+        for (const time of times) {
+          await axios.post(
+            `${API_BASE_URL}/caregiver/schedules`,
+            {
+              elderlyUserId: Number(elderlyId),
+              name,
+              dosage,
+              timeHHMM: formatTime(time),
+              notes,
+              daysOfWeek: daysToSend,
+              mealRelation,
+              startDate: formatDateAPI(startDate),
+            },
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+        }
       }
 
-      Alert.alert("สำเร็จ ✓", "เพิ่มรายการยาเรียบร้อยแล้ว", [
-        {
-          text: "ตกลง",
-          onPress: () =>
-            router.replace({
-              pathname: "/caregiver/schedule",
-              params: { elderlyId, elderlyName },
-            }),
-        },
-      ]);
+      Alert.alert(
+        "สำเร็จ ✓",
+        isEdit ? "แก้ไขรายการยาเรียบร้อยแล้ว" : "เพิ่มรายการยาเรียบร้อยแล้ว",
+        [
+          {
+            text: "ตกลง",
+            onPress: () =>
+              router.replace({
+                pathname: "/caregiver/schedule",
+                params: { elderlyId, elderlyName },
+              }),
+          },
+        ]
+      );
     } catch (err: any) {
       console.log(err.response?.data || err.message);
       Alert.alert("ผิดพลาด", "ไม่สามารถบันทึกได้");
+    } finally {
+      setSaving(false);
     }
   };
 
   /* ---------------- UI ---------------- */
+
+  if (loadingData) {
+    return (
+      <View
+        style={[s.container, { justifyContent: "center", alignItems: "center" }]}
+      >
+        <ActivityIndicator size="large" color="#2563EB" />
+      </View>
+    );
+  }
 
   return (
     <View style={s.container}>
@@ -311,21 +470,31 @@ export default function AddSchedule() {
 
       {/* Header */}
       <View style={s.header}>
-        <Pressable style={s.backBtn} onPress={() => router.back()}>
+        
+        <Pressable style={s.backBtn} onPress={() => router.replace({
+          pathname: "/caregiver/schedule",
+          params: { elderlyId, elderlyName },
+        })}>
           <Ionicons name="arrow-back" size={20} color="#1D4ED8" />
         </Pressable>
         <View style={{ flex: 1, alignItems: "center" }}>
-          <Text style={s.headerTitle}>เพิ่มรายการยา</Text>
-          <View style={s.nameBadge}>
-            <Ionicons name="person" size={11} color="#1D4ED8" />
-            <Text style={s.headerSub}>{elderlyName}</Text>
-          </View>
+          <Text style={s.headerTitle}>
+            {isEdit ? "แก้ไขรายการยา" : "เพิ่มรายการยา"}
+          </Text>
+          {elderlyName && (
+            <View style={s.nameBadge}>
+              <Ionicons name="person" size={11} color="#1D4ED8" />
+              <Text style={s.headerSub}>{elderlyName}</Text>
+            </View>
+          )}
         </View>
         <View style={{ width: 36 }} />
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
-
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 40 }}
+      >
         {/* Card: ข้อมูลยา */}
         <View style={s.card}>
           <View style={s.cardTitleRow}>
@@ -333,7 +502,9 @@ export default function AddSchedule() {
             <Text style={s.cardTitle}>ข้อมูลยา</Text>
           </View>
 
-          <Text style={s.label}>ชื่อยา <Text style={s.required}>*</Text></Text>
+          <Text style={s.label}>
+            ชื่อยา <Text style={s.required}>*</Text>
+          </Text>
           <TextInput
             style={[s.input, errors.name && s.inputError]}
             value={name}
@@ -356,7 +527,9 @@ export default function AddSchedule() {
         <View style={s.card}>
           <View style={s.cardTitleRow}>
             <Ionicons name="time" size={16} color="#1D4ED8" />
-            <Text style={s.cardTitle}>เวลาที่ต้องกิน <Text style={s.required}>*</Text></Text>
+            <Text style={s.cardTitle}>
+              เวลาที่ต้องกิน <Text style={s.required}>*</Text>
+            </Text>
           </View>
 
           {times.map((time, index) => (
@@ -368,9 +541,14 @@ export default function AddSchedule() {
                 <Ionicons name="alarm-outline" size={16} color="#1D4ED8" />
                 <Text style={s.timeText}>{formatTime(time)}</Text>
               </Pressable>
-              <Pressable style={s.removeBtn} onPress={() => removeTime(index)}>
+
+              <Pressable
+                style={s.removeBtn}
+                onPress={() => removeTime(index)}
+              >
                 <Ionicons name="trash-outline" size={16} color="#EF4444" />
               </Pressable>
+
               {showPickerIndex === index && (
                 <DateTimePicker
                   value={time}
@@ -397,11 +575,18 @@ export default function AddSchedule() {
           </View>
 
           <Pressable
-            style={[s.allDaysBtn, selectedDays.length === 7 && s.allDaysActive]}
+            style={[
+              s.allDaysBtn,
+              selectedDays.length === 7 && s.allDaysActive,
+            ]}
             onPress={toggleAllDays}
           >
             <Ionicons
-              name={selectedDays.length === 7 ? "checkmark-circle" : "ellipse-outline"}
+              name={
+                selectedDays.length === 7
+                  ? "checkmark-circle"
+                  : "ellipse-outline"
+              }
               size={16}
               color="white"
             />
@@ -426,19 +611,24 @@ export default function AddSchedule() {
           </View>
         </View>
 
-        {/* Card: วันที่เริ่มต้น */}
-        <View style={s.card}>
-          <View style={s.cardTitleRow}>
-            <Ionicons name="today" size={16} color="#1D4ED8" />
-            <Text style={s.cardTitle}>วันที่เริ่มต้น</Text>
-          </View>
+        {/* Card: วันที่เริ่มต้น — ซ่อนตอน edit */}
+        {!isEdit && (
+          <View style={s.card}>
+            <View style={s.cardTitleRow}>
+              <Ionicons name="today" size={16} color="#1D4ED8" />
+              <Text style={s.cardTitle}>วันที่เริ่มต้น</Text>
+            </View>
 
-          <Pressable style={s.dateBox} onPress={() => setShowCalendar(true)}>
-            <Ionicons name="calendar-outline" size={18} color="#1D4ED8" />
-            <Text style={s.dateText}>{formatDateDisplay(startDate)}</Text>
-            <Ionicons name="chevron-down" size={16} color="#9CA3AF" />
-          </Pressable>
-        </View>
+            <Pressable
+              style={s.dateBox}
+              onPress={() => setShowCalendar(true)}
+            >
+              <Ionicons name="calendar-outline" size={18} color="#1D4ED8" />
+              <Text style={s.dateText}>{formatDateDisplay(startDate)}</Text>
+              <Ionicons name="chevron-down" size={16} color="#9CA3AF" />
+            </Pressable>
+          </View>
+        )}
 
         {/* Card: มื้ออาหาร */}
         <View style={s.card}>
@@ -490,15 +680,30 @@ export default function AddSchedule() {
 
         {/* Buttons */}
         <View style={s.btnRow}>
-          <Pressable style={s.cancelBtn} onPress={() => router.back()}>
+          
+          <Pressable style={s.cancelBtn} onPress={() => router.replace({
+            pathname: "/caregiver/schedule",
+            params: { elderlyId, elderlyName },
+          })}>
             <Text style={s.cancelText}>ยกเลิก</Text>
           </Pressable>
-          <Pressable style={s.saveBtn} onPress={handleSave}>
-            <Ionicons name="checkmark" size={18} color="white" />
-            <Text style={s.saveText}>บันทึก</Text>
+          <Pressable
+            style={s.saveBtn}
+            onPress={handleSave}
+            disabled={saving}
+          >
+            {saving ? (
+              <ActivityIndicator size="small" color="white" />
+            ) : (
+              <>
+                <Ionicons name="checkmark" size={18} color="white" />
+                <Text style={s.saveText}>
+                  {isEdit ? "บันทึกการแก้ไข" : "บันทึก"}
+                </Text>
+              </>
+            )}
           </Pressable>
         </View>
-
       </ScrollView>
     </View>
   );
@@ -508,8 +713,6 @@ export default function AddSchedule() {
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#F0F9FF" },
-
-  // Header
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -540,8 +743,6 @@ const s = StyleSheet.create({
     gap: 4,
   },
   headerSub: { fontSize: 11, color: "#1D4ED8", fontWeight: "600" },
-
-  // Card
   card: {
     backgroundColor: "white",
     borderRadius: 16,
@@ -564,9 +765,13 @@ const s = StyleSheet.create({
     borderBottomColor: "#EFF6FF",
   },
   cardTitle: { fontSize: 14, fontWeight: "700", color: "#1E3A5F" },
-
-  // Input
-  label: { fontSize: 13, color: "#374151", marginBottom: 6, marginTop: 10, fontWeight: "500" },
+  label: {
+    fontSize: 13,
+    color: "#374151",
+    marginBottom: 6,
+    marginTop: 10,
+    fontWeight: "500",
+  },
   required: { color: "#EF4444" },
   input: {
     backgroundColor: "#F8FAFC",
@@ -578,9 +783,12 @@ const s = StyleSheet.create({
     color: "#1E293B",
   },
   inputError: { borderColor: "#EF4444", backgroundColor: "#FFF5F5" },
-
-  // Time
-  timeRow: { flexDirection: "row", alignItems: "center", marginBottom: 8, gap: 8 },
+  timeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+    gap: 8,
+  },
   timeBox: {
     flex: 1,
     flexDirection: "row",
@@ -617,8 +825,6 @@ const s = StyleSheet.create({
     borderStyle: "dashed",
   },
   addTimeText: { fontSize: 13, color: "#1D4ED8", fontWeight: "600" },
-
-  // Days
   allDaysBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -642,8 +848,6 @@ const s = StyleSheet.create({
   dayActive: { backgroundColor: "#2563EB" },
   dayText: { fontSize: 12, fontWeight: "600", color: "#64748B" },
   dayTextActive: { color: "white" },
-
-  // Date picker
   dateBox: {
     flexDirection: "row",
     alignItems: "center",
@@ -655,8 +859,6 @@ const s = StyleSheet.create({
     gap: 10,
   },
   dateText: { flex: 1, fontSize: 15, color: "#1D4ED8", fontWeight: "600" },
-
-  // Meal
   mealGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   mealBtn: {
     flexDirection: "row",
@@ -672,8 +874,6 @@ const s = StyleSheet.create({
   mealActive: { backgroundColor: "#2563EB", borderColor: "#2563EB" },
   mealText: { fontSize: 13, color: "#64748B", fontWeight: "500" },
   mealTextActive: { color: "white", fontWeight: "600" },
-
-  // Textarea
   textarea: {
     backgroundColor: "#F8FAFC",
     borderRadius: 10,
@@ -684,9 +884,12 @@ const s = StyleSheet.create({
     color: "#1E293B",
     minHeight: 80,
   },
-
-  // Buttons
-  btnRow: { flexDirection: "row", marginHorizontal: 16, marginTop: 20, gap: 10 },
+  btnRow: {
+    flexDirection: "row",
+    marginHorizontal: 16,
+    marginTop: 20,
+    gap: 10,
+  },
   cancelBtn: {
     flex: 1,
     backgroundColor: "white",
@@ -750,10 +953,7 @@ const cal = StyleSheet.create({
     alignItems: "center",
   },
   monthLabel: { fontSize: 16, fontWeight: "700", color: "#1E3A5F" },
-  weekHeader: {
-    flexDirection: "row",
-    marginBottom: 8,
-  },
+  weekHeader: { flexDirection: "row", marginBottom: 8 },
   weekLabel: {
     flex: 1,
     textAlign: "center",
@@ -768,15 +968,8 @@ const cal = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  cellSelected: {
-    backgroundColor: "#2563EB",
-    borderRadius: 8,
-  },
-  cellToday: {
-    borderWidth: 1.5,
-    borderColor: "#2563EB",
-    borderRadius: 8,
-  },
+  cellSelected: { backgroundColor: "#2563EB", borderRadius: 8 },
+  cellToday: { borderWidth: 1.5, borderColor: "#2563EB", borderRadius: 8 },
   cellText: { fontSize: 14, color: "#1E293B", fontWeight: "500" },
   cellTextSelected: { color: "white", fontWeight: "700" },
   cellTextPast: { color: "#CBD5E1" },
