@@ -1,10 +1,257 @@
-import { View, Text } from "react-native";
+import React, { useState, useCallback } from "react";
+import {
+  View, Text, Pressable, StyleSheet,
+  ScrollView, ActivityIndicator, Alert,
+} from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { SafeAreaView } from "react-native-safe-area-context";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import axios from "axios";
+import { useFocusEffect } from "expo-router";
+import { API_BASE_URL } from "../../../src/config";
+import { useLogout } from "@/hooks/useLogout";
 
-export default function Report() {
+type DrugStat = {
+  name: string;
+  taken: number;
+  totalFull: number;
+  totalSoFar: number;
+  percentage: number;
+  percentageSoFar: number;
+};
+type ReportData = {
+  taken: number;
+  late: number;
+  missed: number;
+  adherence: number;
+  adherenceSoFar: number;
+  totalFull: number;
+  totalSoFar: number;
+  drugs: DrugStat[];
+};
+type TabType = "day" | "week" | "month";
+
+const tabLabels: { key: TabType; label: string }[] = [
+  { key: "day",   label: "รายวัน" },
+  { key: "week",  label: "รายสัปดาห์" },
+  { key: "month", label: "รายเดือน" },
+];
+
+const adherenceColor = (pct: number) =>
+  pct >= 80 ? "#10B981" : pct >= 50 ? "#F59E0B" : "#EF4444";
+
+const adherenceBg = (pct: number) =>
+  pct >= 80 ? "#ECFDF5" : pct >= 50 ? "#FFFBEB" : "#FFF5F5";
+
+const adherenceLabel = (pct: number) =>
+  pct >= 80 ? "ดีมาก! กินยาสม่ำเสมอ"
+  : pct >= 50 ? "พอใช้ ควรกินให้สม่ำเสมอกว่านี้"
+  : "ต้องปรับปรุง กินยาไม่สม่ำเสมอ";
+
+export default function ElderlyReport() {
+  const logout = useLogout();
+  const [tab, setTab]                     = useState<TabType>("day");
+  const [report, setReport]               = useState<ReportData | null>(null);
+  const [loading, setLoading]             = useState(false);
+
+  const fetchReport = async (t: TabType) => {
+    setLoading(true);
+    setReport(null);
+    try {
+      const token = await AsyncStorage.getItem("token");
+      const res = await axios.get(
+        `${API_BASE_URL}/elderly/report?period=${t}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      setReport(res.data);
+    } catch (e: any) {
+      if (e?.response?.status === 401) logout();
+      else Alert.alert("ผิดพลาด", "ไม่สามารถดึงรายงานได้");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useFocusEffect(useCallback(() => { fetchReport(tab); }, [tab]));
+
   return (
-    <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-      <Text style={{ fontSize: 18 }}>📊 รายงานการกินยา</Text>
-      <Text style={{ color: "#666" }}>ยังไม่มีรายงาน</Text>
-    </View>
+    <SafeAreaView style={s.root}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+
+        {/* Header */}
+        <View style={s.header}>
+          <View>
+            <Text style={s.headerTitle}>รายงาน</Text>
+            <Text style={s.headerSub}>สถิติการกินยาของคุณ</Text>
+          </View>
+          <Pressable style={s.logoutBtn} onPress={logout}>
+            <Ionicons name="log-out-outline" size={20} color="#EF4444" />
+          </Pressable>
+        </View>
+
+        {/* Period tabs */}
+        <View style={s.tabRow}>
+          {tabLabels.map((t) => (
+            <Pressable key={t.key} style={[s.tabBtn, tab === t.key && s.tabActive]}
+              onPress={() => setTab(t.key)}>
+              <Text style={[s.tabText, tab === t.key && s.tabTextActive]}>{t.label}</Text>
+            </Pressable>
+          ))}
+        </View>
+
+        {loading ? (
+          <View style={s.center}>
+            <ActivityIndicator size="large" color="#2563EB" />
+            <Text style={s.loadingText}>กำลังโหลดข้อมูล...</Text>
+          </View>
+        ) : !report ? null : (
+          <>
+            {/* Stat cards */}
+            <View style={s.statsGrid}>
+              {[
+                { icon: "checkmark-circle", color: "#10B981", val: report.taken,                label: "กินแล้ว" },
+                { icon: "time",             color: "#F59E0B", val: report.late,                 label: "กินล่าช้า" },
+                { icon: "close-circle",     color: "#EF4444", val: report.missed,               label: "ข้าม" },
+                { icon: "trending-up",      color: "#2563EB", val: `${report.adherenceSoFar}%`, label: "สม่ำเสมอ" },
+              ].map((item, i) => (
+                <View key={i} style={[s.statCard, { borderLeftColor: item.color }]}>
+                  <Ionicons name={item.icon as any} size={22} color={item.color} />
+                  <Text style={s.statNum}>{item.val}</Text>
+                  <Text style={s.statLabel}>{item.label}</Text>
+                </View>
+              ))}
+            </View>
+
+            {/* Adherence card */}
+            <View style={s.card}>
+              <View style={s.cardTitleRow}>
+                <Ionicons name="analytics-outline" size={16} color="#1D4ED8" />
+                <Text style={s.cardTitle}>
+                  อัตราการกิน{tab === "day" ? "วันนี้" : tab === "week" ? "สัปดาห์นี้" : "เดือนนี้"}
+                </Text>
+                <Text style={[s.adherencePct, { color: adherenceColor(report.adherenceSoFar) }]}>
+                  {report.adherenceSoFar}%
+                  {tab !== "day" && report.totalFull !== report.totalSoFar
+                    ? ` (${report.adherence}%)` : ""}
+                </Text>
+              </View>
+
+              <Text style={s.adherenceDesc}>
+                {"กินยาแล้ว "}
+                {report.taken}/{report.totalFull} ครั้ง
+                {tab !== "day" && report.totalFull > report.totalSoFar
+                  ? ` · อีก ${report.totalFull - report.totalSoFar} ครั้งที่เหลือ` : ""}
+                {report.late > 0 ? ` · ล่าช้า ${report.late} ครั้ง` : ""}
+              </Text>
+
+              <View style={s.progressBg}>
+                <View style={[s.progressFill, {
+                  width: `${report.adherence}%` as any,
+                  backgroundColor: adherenceColor(report.adherence) + "50",
+                }]} />
+                <View style={[s.progressFill, {
+                  position: "absolute", top: 0, left: 0,
+                  width: `${report.adherenceSoFar}%` as any,
+                  backgroundColor: adherenceColor(report.adherenceSoFar),
+                }]} />
+              </View>
+
+              <View style={[s.badge, { backgroundColor: adherenceBg(report.adherenceSoFar) }]}>
+                <Ionicons
+                  name={report.adherenceSoFar >= 80 ? "checkmark-circle" : report.adherenceSoFar >= 50 ? "warning" : "alert-circle"}
+                  size={14} color={adherenceColor(report.adherenceSoFar)}
+                />
+                <Text style={[s.badgeText, { color: adherenceColor(report.adherenceSoFar) }]}>
+                  {adherenceLabel(report.adherenceSoFar)}
+                </Text>
+              </View>
+            </View>
+
+            {/* Drug detail */}
+            <View style={s.card}>
+              <View style={s.cardTitleRow}>
+                <Ionicons name="medical" size={16} color="#1D4ED8" />
+                <Text style={s.cardTitle}>รายละเอียดแต่ละยา</Text>
+              </View>
+
+              {report.drugs.length === 0 ? (
+                <Text style={s.noDrug}>ยังไม่มีรายการยา</Text>
+              ) : (
+                report.drugs.map((drug, i) => (
+                  <View key={i} style={[s.drugRow, i < report.drugs.length - 1 && s.drugBorder]}>
+                    <View style={s.drugLeft}>
+                      <View style={[s.drugDot, { backgroundColor: adherenceColor(drug.percentageSoFar) }]} />
+                      <View>
+                        <Text style={s.drugName}>{drug.name}</Text>
+                        <Text style={s.drugSub}>
+                          กิน {drug.taken}/{drug.totalFull} ครั้ง
+                          {drug.totalFull > drug.totalSoFar
+                            ? ` · อีก ${drug.totalFull - drug.totalSoFar} ครั้ง` : ""}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={s.drugRight}>
+                      <Text style={[s.drugPct, { color: adherenceColor(drug.percentageSoFar) }]}>
+                        {drug.percentageSoFar}%
+                      </Text>
+                      <View style={s.drugBarBg}>
+                        <View style={[s.drugBarFill, {
+                          width: `${drug.percentage}%` as any,
+                          backgroundColor: adherenceColor(drug.percentage) + "50",
+                        }]} />
+                        <View style={[s.drugBarFill, {
+                          position: "absolute", top: 0, left: 0,
+                          width: `${drug.percentageSoFar}%` as any,
+                          backgroundColor: adherenceColor(drug.percentageSoFar),
+                        }]} />
+                      </View>
+                    </View>
+                  </View>
+                ))
+              )}
+            </View>
+          </>
+        )}
+      </ScrollView>
+    </SafeAreaView>
   );
 }
+
+const s = StyleSheet.create({
+  root:          { flex: 1, backgroundColor: "#F0F9FF" },
+  center:        { paddingVertical: 60, alignItems: "center" },
+  loadingText:   { marginTop: 10, color: "#64748B", fontSize: 13 },
+  header:        { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 16, paddingVertical: 20 },
+  headerTitle:   { fontSize: 26, fontWeight: "800", color: "#1E3A5F" },
+  headerSub:     { fontSize: 13, color: "#64748B", marginTop: 2 },
+  logoutBtn:     { width: 44, height: 44, borderRadius: 13, backgroundColor: "#FFF5F5", justifyContent: "center", alignItems: "center", borderWidth: 1, borderColor: "#FEE2E2" },
+  tabRow:        { flexDirection: "row", marginHorizontal: 16, marginBottom: 4, backgroundColor: "white", borderRadius: 12, padding: 4, shadowColor: "#93C5FD", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 6, elevation: 2 },
+  tabBtn:        { flex: 1, paddingVertical: 8, alignItems: "center", borderRadius: 10 },
+  tabActive:     { backgroundColor: "#2563EB" },
+  tabText:       { fontSize: 13, fontWeight: "600", color: "#94A3B8" },
+  tabTextActive: { color: "white" },
+  statsGrid:     { flexDirection: "row", flexWrap: "wrap", marginHorizontal: 16, marginTop: 16, gap: 10 },
+  statCard:      { flex: 1, minWidth: "45%", backgroundColor: "white", borderRadius: 14, padding: 14, borderLeftWidth: 4, alignItems: "center", gap: 4, shadowColor: "#93C5FD", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 6, elevation: 2 },
+  statNum:       { fontSize: 22, fontWeight: "800", color: "#1E293B" },
+  statLabel:     { fontSize: 12, color: "#64748B", fontWeight: "500" },
+  card:          { backgroundColor: "white", borderRadius: 16, padding: 16, marginHorizontal: 16, marginTop: 12, shadowColor: "#93C5FD", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 8, elevation: 2 },
+  cardTitleRow:  { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 10, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: "#EFF6FF" },
+  cardTitle:     { flex: 1, fontSize: 14, fontWeight: "700", color: "#1E3A5F" },
+  adherencePct:  { fontSize: 16, fontWeight: "800" },
+  adherenceDesc: { fontSize: 12, color: "#64748B", marginBottom: 10 },
+  progressBg:    { height: 10, backgroundColor: "#F1F5F9", borderRadius: 99, overflow: "hidden" },
+  progressFill:  { height: "100%", borderRadius: 99 },
+  badge:         { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 12, padding: 10, borderRadius: 10 },
+  badgeText:     { fontSize: 13, fontWeight: "600" },
+  drugRow:       { flexDirection: "row", alignItems: "center", paddingVertical: 12, gap: 10 },
+  drugBorder:    { borderBottomWidth: 1, borderBottomColor: "#F1F5F9" },
+  drugLeft:      { flex: 1, flexDirection: "row", alignItems: "center", gap: 10 },
+  drugDot:       { width: 10, height: 10, borderRadius: 5 },
+  drugName:      { fontSize: 14, fontWeight: "600", color: "#1E293B" },
+  drugSub:       { fontSize: 12, color: "#94A3B8", marginTop: 2 },
+  drugRight:     { alignItems: "flex-end", gap: 4, minWidth: 80 },
+  drugPct:       { fontSize: 14, fontWeight: "700" },
+  drugBarBg:     { width: 80, height: 6, backgroundColor: "#F1F5F9", borderRadius: 99, overflow: "hidden" },
+  drugBarFill:   { height: "100%", borderRadius: 99 },
+  noDrug:        { textAlign: "center", color: "#94A3B8", paddingVertical: 16, fontSize: 13 },
+});

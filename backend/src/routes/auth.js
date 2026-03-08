@@ -115,6 +115,7 @@ router.post("/login-elderly", async (req, res) => {
 
     res.json({
       token,
+      elderlyId: user.id,
       user: { id: user.id, role: user.role, name: user.name }
     });
 

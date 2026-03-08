@@ -56,6 +56,10 @@ export default function Index() {
 
         await AsyncStorage.setItem("token", res.data.token);
         await AsyncStorage.setItem("role", "elderly");
+        await AsyncStorage.setItem("elderlyId", String(res.data.elderlyId));
+
+        await new Promise(resolve => setTimeout(resolve, 100));
+
 
         // ✅ เข้า Today ของผู้สูงอายุคนนั้น
         router.replace(`/elderly/${res.data.elderlyId}/today`);

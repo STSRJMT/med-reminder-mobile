@@ -180,7 +180,9 @@ export default function CaregiverSchedule() {
       }
 
       if (targetId) {
-        await Promise.all([fetchSchedules(targetId), fetchToday(targetId)]);
+        const promises: Promise<any>[] = [fetchSchedules(targetId), fetchToday(targetId)];
+        if (todaySubTab === "pick") promises.push(fetchHistory(targetId, selectedDate));
+        await Promise.all(promises);
       }
     } catch {
       Alert.alert("โหลดข้อมูลไม่ได้");
@@ -225,6 +227,8 @@ export default function CaregiverSchedule() {
         status,
       }, { headers: { Authorization: `Bearer ${token}` } });
       await fetchToday(selectedElderly.id);
+      // ถ้าอยู่ใน sub-tab "เลือกวันที่" ให้ refresh history ด้วย
+      if (todaySubTab === "pick") await fetchHistory(selectedElderly.id, selectedDate);
     } catch {
       setTodayList(prev =>
         prev.map(item => item.id === updatedId ? { ...item, status: previousStatus } : item)
@@ -288,6 +292,47 @@ export default function CaregiverSchedule() {
       date.getMonth() === now.getMonth() &&
       date.getDate() === now.getDate()
     );
+  };
+
+  // ── helper เรียงลำดับ ──
+  const getTimeMs = (t: string) => {
+    const [h, m] = t.split(":").map(Number);
+    return h * 60 + m;
+  };
+
+  const sortTodayList = (items: TodaySchedule[]): TodaySchedule[] => {
+    const nowMs = new Date().getHours() * 60 + new Date().getMinutes();
+    return [...items].sort((a, b) => {
+      const priority = (item: TodaySchedule) => {
+        const ms = getTimeMs(item.time_hhmm);
+        const diff = nowMs - ms;
+        if (!item.status && diff >= 30)   return 0; // เลยเวลาแล้ว
+        if (!item.status)                 return 1; // กำลังจะถึง
+        if (item.status === "late")       return 2;
+        if (item.status === "taken")      return 3;
+        if (item.status === "missed")     return 4;
+        return 5;
+      };
+      const pa = priority(a), pb = priority(b);
+      if (pa !== pb) return pa - pb;
+      return getTimeMs(a.time_hhmm) - getTimeMs(b.time_hhmm);
+    });
+  };
+
+  const sortHistoryList = (items: TodaySchedule[], isToday: boolean): TodaySchedule[] => {
+    if (isToday) return sortTodayList(items);
+    // วันอื่น — ไม่มี overdue/upcoming แค่เรียง status + เวลา
+    return [...items].sort((a, b) => {
+      const priority = (item: TodaySchedule) => {
+        if (item.status === "missed")  return 0;
+        if (item.status === "late")    return 1;
+        if (item.status === "taken")   return 2;
+        return 3; // null
+      };
+      const pa = priority(a), pb = priority(b);
+      if (pa !== pb) return pa - pb;
+      return getTimeMs(a.time_hhmm) - getTimeMs(b.time_hhmm);
+    });
   };
 
   // ── Today card renderer ──
@@ -624,7 +669,7 @@ export default function CaregiverSchedule() {
                     <Text style={s.emptyText}>ไม่มียาที่ต้องกินวันนี้</Text>
                   </View>
                 ) : (
-                  todayList.map((item) =>
+                  sortTodayList(todayList).map((item) =>
                     renderMedCard(item, () => { setActiveItem(item); setModalVisible(true); })
                   )
                 )}
@@ -719,7 +764,7 @@ export default function CaregiverSchedule() {
                     <Text style={s.emptyText}>ไม่มียาในวันที่เลือก</Text>
                   </View>
                 ) : (
-                  historyList.map((item) => {
+                  sortHistoryList(historyList, isDateToday(selectedDate)).map((item) => {
                     const canLog = isDateToday(selectedDate);
                     return renderMedCard(
                       item,

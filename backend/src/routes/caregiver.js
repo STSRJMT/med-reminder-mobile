@@ -5,6 +5,25 @@ const auth = require("../middleware/auth");
 
 const router = express.Router();
 
+// ✅ ส่ง Push ผ่าน Expo Push API
+async function sendExpoPush(expoPushToken, title, body) {
+  try {
+    await fetch("https://exp.host/--/api/v2/push/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        to: expoPushToken,
+        title,
+        body,
+        sound: "default",
+        priority: "high",
+      }),
+    });
+  } catch (err) {
+    console.error("EXPO PUSH ERROR:", err);
+  }
+}
+
 function getTodayLocalStr() {
   const now = new Date();
   const year = now.getFullYear();
@@ -30,7 +49,6 @@ function formatDateOnly(dateInput) {
   return `${year}-${month}-${day}`;
 }
 
-// นับวันที่ควรกินจริงใน period (ไม่เกิน endDate ที่กำหนด)
 function countActiveDays(schedule, startDate, endDate) {
   const allowedDays = schedule.days_of_week
     ? schedule.days_of_week.split(",").map(d => parseInt(d.trim()))
@@ -386,7 +404,6 @@ router.get("/report/:elderlyId", auth(["caregiver"]), async (req, res) => {
       startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
       endDate   = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
     } else if (period === "week") {
-      // จันทร์ → อาทิตย์
       const day = now.getDay();
       const diffToMonday = day === 0 ? -6 : 1 - day;
       startDate = new Date(now);
@@ -400,7 +417,6 @@ router.get("/report/:elderlyId", auth(["caregiver"]), async (req, res) => {
       endDate   = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
     }
 
-    // วันนี้ — ใช้ตัด total ไม่ให้นับอนาคต
     const todayEnd = new Date();
     todayEnd.setHours(23, 59, 59, 999);
 
@@ -430,9 +446,7 @@ router.get("/report/:elderlyId", auth(["caregiver"]), async (req, res) => {
       }
       const entry = medMap.get(s.med_id);
       entry.scheduleIds.push(s.id);
-      // totalFull = ทั้ง period (รวมวันในอนาคต)
       entry.totalFull  += countActiveDays(s, startDate, endDate);
-      // totalSoFar = ถึงวันนี้เท่านั้น
       entry.totalSoFar += countActiveDays(s, startDate, todayEnd);
     }
 
@@ -447,14 +461,14 @@ router.get("/report/:elderlyId", auth(["caregiver"]), async (req, res) => {
       taken: m.taken,
       totalFull: m.totalFull,
       totalSoFar: m.totalSoFar,
-      percentage:       m.totalFull   > 0 ? Math.round((m.taken / m.totalFull)   * 100) : 0,
-      percentageSoFar:  m.totalSoFar  > 0 ? Math.round((m.taken / m.totalSoFar)  * 100) : 0,
+      percentage:      m.totalFull  > 0 ? Math.round((m.taken / m.totalFull)  * 100) : 0,
+      percentageSoFar: m.totalSoFar > 0 ? Math.round((m.taken / m.totalSoFar) * 100) : 0,
     }));
 
-    const totalFull   = drugs.reduce((sum, d) => sum + d.totalFull,   0);
-    const totalSoFar  = drugs.reduce((sum, d) => sum + d.totalSoFar,  0);
-    const adherence        = totalFull  > 0 ? Math.round((taken / totalFull)  * 100) : 0;
-    const adherenceSoFar   = totalSoFar > 0 ? Math.round((taken / totalSoFar) * 100) : 0;
+    const totalFull  = drugs.reduce((sum, d) => sum + d.totalFull,  0);
+    const totalSoFar = drugs.reduce((sum, d) => sum + d.totalSoFar, 0);
+    const adherence      = totalFull  > 0 ? Math.round((taken / totalFull)  * 100) : 0;
+    const adherenceSoFar = totalSoFar > 0 ? Math.round((taken / totalSoFar) * 100) : 0;
 
     res.json({ taken, late, missed, skipped, adherence, adherenceSoFar, totalFull, totalSoFar, drugs });
   } catch (err) {
@@ -490,7 +504,6 @@ router.get("/today/:elderlyId", auth(["caregiver"]), async (req, res) => {
     );
 
     const dayNameMap = { 0: "Sun", 1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat" };
-
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
@@ -523,7 +536,7 @@ router.get("/today/:elderlyId", auth(["caregiver"]), async (req, res) => {
 });
 
 /* ===============================
-   LOG INTAKE
+   LOG INTAKE + ✅ Expo Push Notification
 ================================= */
 router.post("/intake-logs", auth(["caregiver"]), async (req, res) => {
   try {
@@ -552,9 +565,61 @@ router.post("/intake-logs", auth(["caregiver"]), async (req, res) => {
       );
     }
 
+    // ✅ ตอบ client ก่อน แล้วค่อยส่ง push ใน background
     res.json({ ok: true });
+
+    try {
+      const [scheduleInfo] = await db.query(
+        `SELECT m.name AS medication_name, u.name AS elderly_name
+         FROM schedules s
+         JOIN medications m ON m.id = s.medication_id
+         JOIN users u ON u.id = m.elderly_user_id
+         WHERE s.id = ?`,
+        [scheduleId]
+      );
+
+      const [caregivers] = await db.query(
+        `SELECT u.fcm_token FROM users u
+         JOIN care_relationships cr ON cr.caregiver_user_id = u.id
+         WHERE cr.elderly_user_id = ? AND u.fcm_token IS NOT NULL`,
+        [elderlyId]
+      );
+
+      const medName     = scheduleInfo[0]?.medication_name ?? "ยา";
+      const elderlyName = scheduleInfo[0]?.elderly_name ?? "ผู้สูงอายุ";
+      const statusLabel = status === "taken" ? "กินยาแล้ว ✓"
+                        : status === "late"  ? "กินยาล่าช้า ⏰"
+                        : "ข้ามมื้อยา ✗";
+
+      for (const cg of caregivers) {
+        if (!cg.fcm_token) continue;
+        await sendExpoPush(
+          cg.fcm_token,
+          `${elderlyName} — ${statusLabel}`,
+          `ยา "${medName}"`
+        );
+      }
+    } catch (pushErr) {
+      console.error("PUSH NOTIFICATION ERROR:", pushErr);
+    }
+
   } catch (err) {
     console.error(err);
+    res.status(500).json({ message: "server error" });
+  }
+});
+
+/* ===============================
+   SAVE FCM TOKEN
+================================= */
+router.post("/fcm-token", auth(["caregiver"]), async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ message: "token required" });
+    await db.query("UPDATE users SET fcm_token = ? WHERE id = ?", [token, req.user.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("FCM TOKEN ERROR:", err);
     res.status(500).json({ message: "server error" });
   }
 });
@@ -595,7 +660,7 @@ router.get("/schedules/:id/siblings", auth(["caregiver"]), async (req, res) => {
 router.get("/history/:elderlyId", auth(["caregiver"]), async (req, res) => {
   try {
     const { elderlyId } = req.params;
-    const { date } = req.query; // format: YYYY-MM-DD
+    const { date } = req.query;
 
     if (!date) return res.status(400).json({ message: "date required" });
 
@@ -648,6 +713,5 @@ router.get("/history/:elderlyId", auth(["caregiver"]), async (req, res) => {
     res.status(500).json({ message: "server error" });
   }
 });
-
 
 module.exports = router;

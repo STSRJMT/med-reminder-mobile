@@ -1,6 +1,7 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const { startMissedMedicationJob } = require("./jobs/missedMedicationJob");
 
 const app = express();
 
@@ -8,7 +9,6 @@ const app = express();
    Middlewares
 ============================= */
 
-// เปิด CORS ให้ทุก origin (dev mode)
 app.use(
   cors({
     origin: "*",
@@ -45,7 +45,9 @@ app.use("/elderly", require("./routes/elderly"));
 
 const port = process.env.PORT || 4000;
 
-// 🔥 สำคัญมาก ต้องใส่ 0.0.0.0
 app.listen(port, "0.0.0.0", () => {
   console.log("🚀 API running on port", port);
+
+  // ✅ เริ่ม cron job หลัง server start
+  startMissedMedicationJob();
 });
