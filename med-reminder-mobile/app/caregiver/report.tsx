@@ -99,6 +99,8 @@ export default function CaregiverReport() {
     setReport(null);
     try {
       const token = await AsyncStorage.getItem("token");
+      // ❌ ลบ auto-missed ออก: ผู้ดูแลไม่ควรเปลี่ยน status แทนผู้สูงอายุ
+      // status จะถูก set โดยผู้สูงอายุเองผ่านหน้าตารางยา
       const res = await axios.get(
         `${API_BASE_URL}/caregiver/report/${id}?period=${t}`,
         { headers: { Authorization: `Bearer ${token}` } }
@@ -132,7 +134,6 @@ export default function CaregiverReport() {
             <Text style={s.headerTitle}>รายงาน</Text>
             <Text style={s.headerSub}>สถิติและสรุปการกินยา</Text>
           </View>
-          {/* logout แทน icon เฉยๆ */}
           <Pressable style={s.logoutBtn} onPress={handleLogout}>
             <Ionicons name="log-out-outline" size={20} color="#EF4444" />
           </Pressable>
@@ -190,7 +191,7 @@ export default function CaregiverReport() {
                   {[
                     { icon: "checkmark-circle", color: "#10B981", val: report.taken,                label: "กินแล้ว" },
                     { icon: "time",             color: "#F59E0B", val: report.late,                 label: "กินล่าช้า" },
-                    { icon: "close-circle",     color: "#EF4444", val: report.missed,               label: "ข้าม" },
+                    { icon: "close-circle",     color: "#EF4444", val: report.missed,               label: "ข้าม/ลืม" },
                     { icon: "trending-up",      color: "#2563EB", val: `${report.adherenceSoFar}%`, label: "สม่ำเสมอ" },
                   ].map((item, i) => (
                     <View key={i} style={[s.statCard, { borderLeftColor: item.color }]}>
@@ -210,30 +211,40 @@ export default function CaregiverReport() {
                     </Text>
                     <Text style={[s.adherencePct, { color: adherenceColor(report.adherenceSoFar) }]}>
                       {report.adherenceSoFar}%
-                      {tab !== "day" && report.totalFull !== report.totalSoFar
-                        ? ` (${report.adherence}%)` : ""}
                     </Text>
                   </View>
 
                   <Text style={s.adherenceDesc}>
-                    {"กินยาแล้ว "}
-                    {report.taken}/{report.totalFull} ครั้ง
+                    กินยาแล้ว {report.taken} จาก {report.totalSoFar} ครั้ง (เฉพาะที่ผ่านมา)
                     {tab !== "day" && report.totalFull > report.totalSoFar
-                      ? ` · อีก ${report.totalFull - report.totalSoFar} ครั้งที่เหลือ` : ""}
-                    {report.late > 0 ? ` · ล่าช้า ${report.late} ครั้ง` : ""}
+                      ? `  ·  ยังเหลืออีก ${report.totalFull - report.totalSoFar} ครั้งในช่วงนี้` : ""}
+                    {report.late > 0 ? `  ·  ล่าช้า ${report.late} ครั้ง` : ""}
+                    {report.missed > 0 ? `  ·  ลืมกิน ${report.missed} ครั้ง` : ""}
                   </Text>
 
                   <View style={s.progressBg}>
                     <View style={[s.progressFill, {
-                      width: `${report.adherence}%` as any,
-                      backgroundColor: adherenceColor(report.adherence) + "50",
-                    }]} />
-                    <View style={[s.progressFill, {
-                      position: "absolute", top: 0, left: 0,
                       width: `${report.adherenceSoFar}%` as any,
                       backgroundColor: adherenceColor(report.adherenceSoFar),
                     }]} />
                   </View>
+
+                  {tab !== "day" && report.totalFull !== report.totalSoFar && (
+                    <View style={s.legendRow}>
+                      <View style={s.legendItem}>
+                        <View style={[s.legendDot, { backgroundColor: adherenceColor(report.adherenceSoFar) }]} />
+                        <Text style={s.legendText}>
+                          ที่ผ่านมา: {report.adherenceSoFar}% ({report.taken}/{report.totalSoFar} ครั้ง)
+                        </Text>
+                      </View>
+                      <View style={s.legendItem}>
+                        <View style={[s.legendDot, { backgroundColor: "#CBD5E1" }]} />
+                        <Text style={s.legendText}>
+                          ทั้ง{tab === "week" ? "สัปดาห์" : "เดือน"}: {report.adherence}% ({report.taken}/{report.totalFull} ครั้ง)
+                        </Text>
+                      </View>
+                    </View>
+                  )}
 
                   <View style={[s.badge, { backgroundColor: adherenceBg(report.adherenceSoFar) }]}>
                     <Ionicons
@@ -263,9 +274,9 @@ export default function CaregiverReport() {
                           <View>
                             <Text style={s.drugName}>{drug.name}</Text>
                             <Text style={s.drugSub}>
-                              กิน {drug.taken}/{drug.totalFull} ครั้ง
+                              กิน {drug.taken}/{drug.totalSoFar} ครั้ง (ที่ผ่านมา)
                               {drug.totalFull > drug.totalSoFar
-                                ? ` · อีก ${drug.totalFull - drug.totalSoFar} ครั้ง` : ""}
+                                ? ` · เหลือ ${drug.totalFull - drug.totalSoFar} ครั้ง` : ""}
                             </Text>
                           </View>
                         </View>
@@ -275,11 +286,6 @@ export default function CaregiverReport() {
                           </Text>
                           <View style={s.drugBarBg}>
                             <View style={[s.drugBarFill, {
-                              width: `${drug.percentage}%` as any,
-                              backgroundColor: adherenceColor(drug.percentage) + "50",
-                            }]} />
-                            <View style={[s.drugBarFill, {
-                              position: "absolute", top: 0, left: 0,
                               width: `${drug.percentageSoFar}%` as any,
                               backgroundColor: adherenceColor(drug.percentageSoFar),
                             }]} />
@@ -326,9 +332,13 @@ const s = StyleSheet.create({
   cardTitleRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 10, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: "#EFF6FF" },
   cardTitle:    { flex: 1, fontSize: 14, fontWeight: "700", color: "#1E3A5F" },
   adherencePct: { fontSize: 16, fontWeight: "800" },
-  adherenceDesc:{ fontSize: 12, color: "#64748B", marginBottom: 10 },
+  adherenceDesc:{ fontSize: 12, color: "#64748B", marginBottom: 10, lineHeight: 18 },
   progressBg:   { height: 10, backgroundColor: "#F1F5F9", borderRadius: 99, overflow: "hidden" },
   progressFill: { height: "100%", borderRadius: 99 },
+  legendRow:    { marginTop: 10, gap: 6 },
+  legendItem:   { flexDirection: "row", alignItems: "center", gap: 6 },
+  legendDot:    { width: 8, height: 8, borderRadius: 4 },
+  legendText:   { fontSize: 12, color: "#64748B" },
   badge:        { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 12, padding: 10, borderRadius: 10 },
   badgeText:    { fontSize: 13, fontWeight: "600" },
   drugRow:      { flexDirection: "row", alignItems: "center", paddingVertical: 12, gap: 10 },

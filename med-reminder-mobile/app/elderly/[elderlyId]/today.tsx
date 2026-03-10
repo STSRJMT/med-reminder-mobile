@@ -104,7 +104,16 @@ export default function ElderlyToday() {
   const fetchToday = async (showLoading = true) => {
     try {
       if (showLoading) setLoading(true);
-      const token   = await AsyncStorage.getItem("token");
+      const token = await AsyncStorage.getItem("token");
+
+      // ✅ auto-mark missed ก่อน fetch เสมอ (เลย 60 นาทีแล้วไม่กด = ข้ามมื้อ)
+      // ใช้ .catch(() => {}) เพื่อไม่ให้ block การโหลดหน้าถ้า request fail
+      await axios.post(
+        `${API_BASE_URL}/elderly/auto-missed`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } }
+      ).catch(() => {});
+
       const dateStr = toDateStr(new Date());
       const res     = await axios.get(
         `${API_BASE_URL}/elderly/today?date=${dateStr}`,
@@ -118,13 +127,16 @@ export default function ElderlyToday() {
       setLoading(false);
 
       scheduleAllNotifications(
-        items.map(i => ({
-          scheduleId:     i.scheduleId,
-          timeHHMM:       i.timeHHMM,
-          medicationName: i.medicationName,
-          dosage:         i.dosage,
-        }))
-      );
+  items
+    .filter(i => !i._status) 
+    .map(i => ({
+      scheduleId:     i.scheduleId,
+      timeHHMM:       i.timeHHMM,
+      medicationName: i.medicationName,
+      dosage:         i.dosage,
+      daysOfWeek:     i.daysOfWeek,
+    }))
+);
     } catch {
       Alert.alert("โหลดข้อมูลไม่ได้");
       setLoading(false);

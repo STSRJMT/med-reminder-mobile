@@ -478,6 +478,73 @@ router.get("/report/:elderlyId", auth(["caregiver"]), async (req, res) => {
 });
 
 /* ===============================
+   AUTO-MARK MISSED
+   เรียกตอนโหลด report — ตรวจยาที่เลยเวลา 30 นาทีแล้วยังไม่กิน
+================================= */
+router.post("/auto-missed/:elderlyId", auth(["caregiver"]), async (req, res) => {
+  try {
+    const { elderlyId } = req.params;
+
+    const [rel] = await db.query(
+      "SELECT 1 FROM care_relationships WHERE caregiver_user_id = ? AND elderly_user_id = ?",
+      [req.user.id, elderlyId]
+    );
+    if (rel.length === 0) return res.status(403).json({ message: "ไม่มีสิทธิ์" });
+
+    const now = new Date();
+    const todayStr = now.toLocaleDateString("en-CA");
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    const todayDayNum = now.getDay();
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+
+    const [schedules] = await db.query(
+      `SELECT s.id, s.time_hhmm, s.days_of_week, s.start_date
+       FROM schedules s
+       JOIN medications m ON m.id = s.medication_id
+       WHERE m.elderly_user_id = ?`,
+      [elderlyId]
+    );
+
+    for (const s of schedules) {
+      // เช็คว่าวันนี้ต้องกินมั้ย
+      if (s.start_date) {
+        const start = new Date(s.start_date); start.setHours(0, 0, 0, 0);
+        if (start > today) continue;
+      }
+      if (s.days_of_week) {
+        const days = s.days_of_week.split(",").map(d => parseInt(d.trim()));
+        if (!days.includes(todayDayNum)) continue;
+      }
+
+      // เช็คว่าเลยเวลากิน + 30 นาทีแล้วหรือยัง
+      const [h, m] = s.time_hhmm.split(":").map(Number);
+      const scheduleMinutes = h * 60 + m;
+      if (currentMinutes < scheduleMinutes + 60) continue;
+
+      // เช็คว่ามี log วันนี้แล้วหรือยัง
+      const [existing] = await db.query(
+        `SELECT id FROM intake_logs
+         WHERE schedule_id = ? AND elderly_user_id = ? AND DATE(taken_at) = ?`,
+        [s.id, elderlyId, todayStr]
+      );
+      if (existing.length > 0) continue;
+
+      // บันทึก missed
+      await db.query(
+        `INSERT INTO intake_logs (schedule_id, elderly_user_id, status, taken_at)
+         VALUES (?, ?, 'missed', NOW())`,
+        [s.id, elderlyId]
+      );
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("AUTO MISSED ERROR:", err);
+    res.status(500).json({ message: "server error" });
+  }
+});
+
+/* ===============================
    GET TODAY'S SCHEDULES
 ================================= */
 router.get("/today/:elderlyId", auth(["caregiver"]), async (req, res) => {
@@ -536,7 +603,7 @@ router.get("/today/:elderlyId", auth(["caregiver"]), async (req, res) => {
 });
 
 /* ===============================
-   LOG INTAKE + ✅ Expo Push Notification
+   LOG INTAKE + Expo Push Notification
 ================================= */
 router.post("/intake-logs", auth(["caregiver"]), async (req, res) => {
   try {
@@ -565,7 +632,6 @@ router.post("/intake-logs", auth(["caregiver"]), async (req, res) => {
       );
     }
 
-    // ✅ ตอบ client ก่อน แล้วค่อยส่ง push ใน background
     res.json({ ok: true });
 
     try {

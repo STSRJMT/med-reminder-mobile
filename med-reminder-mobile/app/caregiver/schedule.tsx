@@ -104,25 +104,24 @@ export default function CaregiverSchedule() {
     ]);
   };
 
-  const [elderlyList, setElderlyList]         = useState<Elderly[]>([]);
-  const [selectedElderly, setSelectedElderly] = useState<Elderly | null>(null);
-  const [tab, setTab]                         = useState<TabType>("schedule");
-  const [todaySubTab, setTodaySubTab]         = useState<TodaySubTab>("today");
-  const [schedules, setSchedules]             = useState<Schedule[]>([]);
-  const [todayList, setTodayList]             = useState<TodaySchedule[]>([]);
-  const [historyList, setHistoryList]         = useState<TodaySchedule[]>([]);
-  const [historyLoading, setHistoryLoading]   = useState(false);
-  const [selectedDate, setSelectedDate]       = useState<Date>(() => {
+  const [elderlyList, setElderlyList]             = useState<Elderly[]>([]);
+  const [selectedElderly, setSelectedElderly]     = useState<Elderly | null>(null);
+  const [tab, setTab]                             = useState<TabType>("schedule");
+  const [todaySubTab, setTodaySubTab]             = useState<TodaySubTab>("today");
+  const [schedules, setSchedules]                 = useState<Schedule[]>([]);
+  const [todayList, setTodayList]                 = useState<TodaySchedule[]>([]);
+  const [historyList, setHistoryList]             = useState<TodaySchedule[]>([]);
+  const [historyLoading, setHistoryLoading]       = useState(false);
+  const [selectedDate, setSelectedDate]           = useState<Date>(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0);
   });
-  const [showCalendar, setShowCalendar]       = useState(false);
-  const [loading, setLoading]                 = useState(true);
-  // ── เปลี่ยนจาก showDropdown → showDropdownModal ──
+  const [showCalendar, setShowCalendar]           = useState(false);
+  const [loading, setLoading]                     = useState(true);
   const [showDropdownModal, setShowDropdownModal] = useState(false);
-  const [modalVisible, setModalVisible]       = useState(false);
-  const [activeItem, setActiveItem]           = useState<TodaySchedule | null>(null);
-  const [logging, setLogging]                 = useState(false);
+  const [modalVisible, setModalVisible]           = useState(false);
+  const [activeItem, setActiveItem]               = useState<TodaySchedule | null>(null);
+  const [logging, setLogging]                     = useState(false);
 
   const fetchSchedules = async (id: number) => {
     const token = await AsyncStorage.getItem("token");
@@ -193,7 +192,6 @@ export default function CaregiverSchedule() {
 
   useFocusEffect(useCallback(() => { loadAll(); }, [paramElderlyId]));
 
-  // ── เมื่อเปลี่ยนผู้สูงอายุในขณะที่อยู่ sub-tab "เลือกวันที่" ให้ fetch history ใหม่ทันที ──
   useEffect(() => {
     if (todaySubTab === "pick" && selectedElderly) {
       fetchHistory(selectedElderly.id, selectedDate);
@@ -227,7 +225,6 @@ export default function CaregiverSchedule() {
         status,
       }, { headers: { Authorization: `Bearer ${token}` } });
       await fetchToday(selectedElderly.id);
-      // ถ้าอยู่ใน sub-tab "เลือกวันที่" ให้ refresh history ด้วย
       if (todaySubTab === "pick") await fetchHistory(selectedElderly.id, selectedDate);
     } catch {
       setTodayList(prev =>
@@ -294,7 +291,6 @@ export default function CaregiverSchedule() {
     );
   };
 
-  // ── helper เรียงลำดับ ──
   const getTimeMs = (t: string) => {
     const [h, m] = t.split(":").map(Number);
     return h * 60 + m;
@@ -306,11 +302,11 @@ export default function CaregiverSchedule() {
       const priority = (item: TodaySchedule) => {
         const ms = getTimeMs(item.time_hhmm);
         const diff = nowMs - ms;
-        if (!item.status && diff >= 30)   return 0; // เลยเวลาแล้ว
-        if (!item.status)                 return 1; // กำลังจะถึง
-        if (item.status === "late")       return 2;
-        if (item.status === "taken")      return 3;
-        if (item.status === "missed")     return 4;
+        if (!item.status && diff >= 30) return 0;
+        if (!item.status)              return 1;
+        if (item.status === "late")    return 2;
+        if (item.status === "taken")   return 3;
+        if (item.status === "missed")  return 4;
         return 5;
       };
       const pa = priority(a), pb = priority(b);
@@ -321,13 +317,12 @@ export default function CaregiverSchedule() {
 
   const sortHistoryList = (items: TodaySchedule[], isToday: boolean): TodaySchedule[] => {
     if (isToday) return sortTodayList(items);
-    // วันอื่น — ไม่มี overdue/upcoming แค่เรียง status + เวลา
     return [...items].sort((a, b) => {
       const priority = (item: TodaySchedule) => {
-        if (item.status === "missed")  return 0;
-        if (item.status === "late")    return 1;
-        if (item.status === "taken")   return 2;
-        return 3; // null
+        if (item.status === "missed") return 0;
+        if (item.status === "late")   return 1;
+        if (item.status === "taken")  return 2;
+        return 3;
       };
       const pa = priority(a), pb = priority(b);
       if (pa !== pb) return pa - pb;
@@ -338,18 +333,33 @@ export default function CaregiverSchedule() {
   // ── Today card renderer ──
   const renderMedCard = (item: TodaySchedule, onPress?: () => void) => {
     const cfg = item.status ? statusConfig[item.status as keyof typeof statusConfig] : null;
+
+    // ✅ เช็ค overdue เหมือนฝั่งผู้สูงอายุ
+    const now = new Date();
+    const [hh, mm] = item.time_hhmm.split(":").map(Number);
+    const isViewingToday = todaySubTab === "today" || isDateToday(selectedDate);
+const isOverdue = !item.status && isViewingToday && (now.getHours() * 60 + now.getMinutes()) - (hh * 60 + mm) >= 30;
+
     return (
       <Pressable
         key={`${item.id}-${item.status ?? "null"}`}
-        style={[s.todayCard, cfg && { borderLeftColor: cfg.color }]}
+        style={[
+          s.todayCard,
+          cfg       ? { borderLeftColor: cfg.color }   : null,
+          isOverdue ? { borderLeftColor: "#EF4444" }   : null,
+        ]}
         onPress={onPress}
       >
         <View style={s.cardLeft}>
-          <View style={[s.iconCircle, cfg && { backgroundColor: cfg.bg }]}>
+          <View style={[
+            s.iconCircle,
+            cfg       ? { backgroundColor: cfg.bg }    : null,
+            isOverdue ? { backgroundColor: "#FFF5F5" } : null,
+          ]}>
             <Ionicons
-              name={cfg ? (cfg.icon as any) : "medical"}
+              name={cfg ? (cfg.icon as any) : isOverdue ? "alert-circle" : "medical"}
               size={18}
-              color={cfg ? cfg.color : "#2563EB"}
+              color={cfg ? cfg.color : isOverdue ? "#EF4444" : "#2563EB"}
             />
           </View>
           <View style={{ marginLeft: 12, flex: 1 }}>
@@ -378,9 +388,15 @@ export default function CaregiverSchedule() {
             ) : null}
           </View>
         </View>
+
+        {/* ✅ badge แสดงสถานะครบทุก case */}
         {cfg ? (
           <View style={[s.statusBadge, { backgroundColor: cfg.bg }]}>
             <Text style={[s.statusText, { color: cfg.color }]}>{cfg.label}</Text>
+          </View>
+        ) : isOverdue ? (
+          <View style={[s.statusBadge, { backgroundColor: "#FFF5F5" }]}>
+            <Text style={[s.statusText, { color: "#EF4444" }]}>เลยเวลาแล้ว</Text>
           </View>
         ) : onPress ? (
           <Ionicons name="chevron-forward" size={16} color="#CBD5E1" />
@@ -406,7 +422,6 @@ export default function CaregiverSchedule() {
         </Pressable>
       </View>
 
-      {/* Elderly selector — กดแล้วเปิด Modal แทน dropdown absolute */}
       <View style={s.selectorRow}>
         <Pressable
           style={s.dropdown}
@@ -434,7 +449,6 @@ export default function CaregiverSchedule() {
         </Pressable>
       </View>
 
-      {/* Main Tabs */}
       <View style={s.tabRow}>
         <Pressable style={[s.tabBtn, tab === "schedule" && s.tabActive]} onPress={() => setTab("schedule")}>
           <Ionicons name="list" size={15} color={tab === "schedule" ? "white" : "#94A3B8"} />
@@ -464,26 +478,20 @@ export default function CaregiverSchedule() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#F0F9FF" }}>
 
-      {/* ── Dropdown Modal (แสดงเหนือทุก layer) ── */}
+      {/* ── Dropdown Modal ── */}
       <Modal
         visible={showDropdownModal}
         transparent
         animationType="fade"
         onRequestClose={() => setShowDropdownModal(false)}
       >
-        <Pressable
-          style={s.dropdownOverlay}
-          onPress={() => setShowDropdownModal(false)}
-        >
+        <Pressable style={s.dropdownOverlay} onPress={() => setShowDropdownModal(false)}>
           <View style={s.dropdownModalBox}>
             <Text style={s.dropdownModalTitle}>เลือกผู้สูงอายุ</Text>
             {elderlyList.map((item) => (
               <Pressable
                 key={item.id}
-                style={[
-                  s.dropdownModalItem,
-                  selectedElderly?.id === item.id && s.dropdownModalItemActive,
-                ]}
+                style={[s.dropdownModalItem, selectedElderly?.id === item.id && s.dropdownModalItemActive]}
                 onPress={() => handleSelectElderly(item)}
               >
                 <View style={[s.dropdownAvatar, { backgroundColor: getAvatarColor(item.id) }]}>
@@ -578,7 +586,6 @@ export default function CaregiverSchedule() {
                   </Pressable>
                 </View>
               </View>
-
               <View style={s.timeChipRow}>
                 {group.schedules
                   .slice()
@@ -605,22 +612,13 @@ export default function CaregiverSchedule() {
           {listHeader()}
 
           <View style={{ paddingHorizontal: 16 }}>
-
-            {/* Sub-tabs */}
             <View style={s.subTabRow}>
               <Pressable
                 style={[s.subTabBtn, todaySubTab === "today" && s.subTabActive]}
                 onPress={() => setTodaySubTab("today")}
               >
-                <Ionicons
-                  name="today-outline"
-                  size={14}
-                  color={todaySubTab === "today" ? "#2563EB" : "#94A3B8"}
-                  style={{ marginRight: 4 }}
-                />
-                <Text style={[s.subTabText, todaySubTab === "today" && s.subTabTextActive]}>
-                  ตารางวันนี้
-                </Text>
+                <Ionicons name="today-outline" size={14} color={todaySubTab === "today" ? "#2563EB" : "#94A3B8"} style={{ marginRight: 4 }} />
+                <Text style={[s.subTabText, todaySubTab === "today" && s.subTabTextActive]}>ตารางวันนี้</Text>
               </Pressable>
               <Pressable
                 style={[s.subTabBtn, todaySubTab === "pick" && s.subTabActive]}
@@ -629,15 +627,8 @@ export default function CaregiverSchedule() {
                   if (selectedElderly) fetchHistory(selectedElderly.id, selectedDate);
                 }}
               >
-                <Ionicons
-                  name="calendar-outline"
-                  size={14}
-                  color={todaySubTab === "pick" ? "#2563EB" : "#94A3B8"}
-                  style={{ marginRight: 4 }}
-                />
-                <Text style={[s.subTabText, todaySubTab === "pick" && s.subTabTextActive]}>
-                  เลือกวันที่
-                </Text>
+                <Ionicons name="calendar-outline" size={14} color={todaySubTab === "pick" ? "#2563EB" : "#94A3B8"} style={{ marginRight: 4 }} />
+                <Text style={[s.subTabText, todaySubTab === "pick" && s.subTabTextActive]}>เลือกวันที่</Text>
               </Pressable>
             </View>
 
@@ -681,13 +672,10 @@ export default function CaregiverSchedule() {
               <>
                 <Pressable style={s.datePickerBtn} onPress={() => setShowCalendar(true)}>
                   <Ionicons name="calendar" size={16} color="#2563EB" />
-                  <Text style={s.datePickerText}>
-                    {formatDateTH(selectedDate).long}
-                  </Text>
+                  <Text style={s.datePickerText}>{formatDateTH(selectedDate).long}</Text>
                   <Ionicons name="chevron-down" size={14} color="#64748B" />
                 </Pressable>
 
-                {/* ── Calendar Modal ── */}
                 <Modal transparent animationType="fade" visible={showCalendar}>
                   <Pressable
                     style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "flex-end" }}
@@ -700,12 +688,7 @@ export default function CaregiverSchedule() {
                       <View style={{ width: 40, height: 4, backgroundColor: "#E2E8F0", borderRadius: 99, alignSelf: "center", marginTop: 12, marginBottom: 4 }} />
                       <Calendar
                         current={toDateStr(selectedDate)}
-                        markedDates={{
-                          [toDateStr(selectedDate)]: {
-                            selected: true,
-                            selectedColor: "#2563EB",
-                          },
-                        }}
+                        markedDates={{ [toDateStr(selectedDate)]: { selected: true, selectedColor: "#2563EB" } }}
                         onDayPress={(day) => {
                           const picked = fromDateStr(day.dateString);
                           setSelectedDate(picked);
@@ -731,7 +714,6 @@ export default function CaregiverSchedule() {
                   </Pressable>
                 </Modal>
 
-                {/* Summary ย้อนหลัง */}
                 {!historyLoading && historyList.length > 0 && (() => {
                   const hTaken = historyList.filter(i => i.status === "taken" || i.status === "late").length;
                   const hTotal = historyList.length;
@@ -739,9 +721,7 @@ export default function CaregiverSchedule() {
                   return (
                     <View style={[s.summaryCard, { backgroundColor: "#475569" }]}>
                       <View>
-                        <Text style={s.summaryTitle}>
-                          ตารางยา {formatDateTH(selectedDate).short}
-                        </Text>
+                        <Text style={s.summaryTitle}>ตารางยา {formatDateTH(selectedDate).short}</Text>
                         <Text style={s.summaryNum}>
                           {hTaken}<Text style={s.summaryTotal}>/{hTotal}</Text>
                         </Text>
@@ -845,14 +825,12 @@ const s = StyleSheet.create({
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 16, paddingVertical: 16 },
   headerTitle: { fontSize: 26, fontWeight: "800", color: "#1E3A5F" },
   headerSub: { fontSize: 13, color: "#64748B", marginTop: 2 },
-  headerIcon: { width: 46, height: 46, borderRadius: 14, backgroundColor: "#EFF6FF", justifyContent: "center", alignItems: "center" },
   logoutBtn: { width: 44, height: 44, borderRadius: 13, backgroundColor: "#FFF5F5", justifyContent: "center", alignItems: "center", borderWidth: 1, borderColor: "#FEE2E2" },
   selectorRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, marginBottom: 12, gap: 10 },
   dropdown: { flex: 1, flexDirection: "row", alignItems: "center", backgroundColor: "white", padding: 10, borderRadius: 12, gap: 8, borderWidth: 1, borderColor: "#E2E8F0" },
   dropdownAvatar: { width: 28, height: 28, borderRadius: 8, justifyContent: "center", alignItems: "center" },
   dropdownAvatarText: { color: "white", fontWeight: "800", fontSize: 12 },
   dropdownText: { flex: 1, fontSize: 14, fontWeight: "600", color: "#1E293B" },
-  // ── Dropdown Modal styles ──
   dropdownOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)", justifyContent: "center", alignItems: "center" },
   dropdownModalBox: { backgroundColor: "white", borderRadius: 18, padding: 16, width: "82%", shadowColor: "#000", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.15, shadowRadius: 16, elevation: 10 },
   dropdownModalTitle: { fontSize: 14, fontWeight: "700", color: "#64748B", marginBottom: 10, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: "#F1F5F9" },

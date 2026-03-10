@@ -44,7 +44,8 @@ export default function Index() {
         await AsyncStorage.setItem("role", "caregiver");
 
         // ✅ เข้า Tab ผู้ดูแล → จัดการผู้สูงอายุ
-        router.replace("/caregiver/elderly-list");
+        router.replace("/caregiver/dashboard");
+
       }
 
       // 🔹 ผู้สูงอายุ (phone + pin)

@@ -7,6 +7,7 @@ export type ScheduleItem = {
   timeHHMM: string;
   medicationName: string;
   dosage: string | null;
+  daysOfWeek: string | null; // ✅ เพิ่ม
 };
 
 if (typeof (Notifications as any).setNotificationHandler === "function") {
@@ -54,6 +55,11 @@ export async function scheduleAllNotifications(items: ScheduleItem[]): Promise<v
     const [hh, mm] = item.timeHHMM.split(":").map(Number);
     const medText = `${item.medicationName}${item.dosage ? ` · ${item.dosage}` : ""}`;
 
+    // ✅ แปลง daysOfWeek เป็น array ของตัวเลข เช่น [1,2,3,4,5]
+    const allowedDays: number[] | null = item.daysOfWeek
+      ? item.daysOfWeek.split(",").map(d => parseInt(d.trim()))
+      : null; // null = ทุกวัน
+
     for (let day = 0; day < 7; day++) {
       const base = new Date(
         now.getFullYear(),
@@ -63,6 +69,11 @@ export async function scheduleAllNotifications(items: ScheduleItem[]): Promise<v
         mm,
         0
       );
+
+      // ✅ เช็คว่าวันนั้นต้องกินมั้ย
+      if (allowedDays !== null && !allowedDays.includes(base.getDay())) {
+        continue; // ข้ามวันที่ไม่ต้องกิน
+      }
 
       // ครั้งที่ 1 — ตรงเวลา
       if (base > now) {

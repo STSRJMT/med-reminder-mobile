@@ -177,7 +177,7 @@ export default function AddSchedule() {
       elderlyName: string;
       editMode: string;
       scheduleId: string;
-      scheduleIds: string; // "1,2,3"
+      scheduleIds: string;
     }>();
 
   const isEdit = editMode === "true";
@@ -193,13 +193,12 @@ export default function AddSchedule() {
 
   const [times, setTimes] = useState<Date[]>([new Date()]);
   const [showPickerIndex, setShowPickerIndex] = useState<number | null>(null);
+  // ✅ เก็บค่า temp ระหว่างที่ iOS picker ยังเปิดอยู่
+  const [tempTime, setTempTime] = useState<Date>(new Date());
 
-  // ✅ เก็บ scheduleIds เดิมจาก DB เรียงตาม index ตรงกับ times
   const [editScheduleIds, setEditScheduleIds] = useState<number[]>([]);
-
   const [selectedDays, setSelectedDays] = useState<number[]>([]);
   const [mealRelation, setMealRelation] = useState("ไม่ระบุ");
-
   const [errors, setErrors] = useState<any>({});
 
   /* --- โหลดข้อมูลเดิมถ้า edit mode --- */
@@ -210,7 +209,6 @@ export default function AddSchedule() {
       try {
         const token = await AsyncStorage.getItem("token");
 
-        // โหลด medication info จาก scheduleId แรก
         const res = await axios.get(
           `${API_BASE_URL}/caregiver/schedules/${scheduleId}`,
           { headers: { Authorization: `Bearer ${token}` } }
@@ -229,7 +227,6 @@ export default function AddSchedule() {
           setSelectedDays(days);
         }
 
-        // ✅ โหลดทุกเวลาจาก scheduleIds
         if (scheduleIds) {
           const ids = scheduleIds.split(",").map(Number);
           setEditScheduleIds(ids);
@@ -251,7 +248,6 @@ export default function AddSchedule() {
 
           setTimes(allTimes);
         } else {
-          // fallback: โหลดแค่เวลาเดียว
           setEditScheduleIds([Number(scheduleId)]);
           const [hh, mm] = d.time_hhmm.split(":").map(Number);
           const t = new Date();
@@ -268,20 +264,20 @@ export default function AddSchedule() {
     load();
   }, [scheduleId]);
 
-  // ✅ เพิ่ม useEffect นี้ — reset ทุก state เมื่อเป็น add mode
   useFocusEffect(useCallback(() => {
-  if (!isEdit) {
-    setName("");
-    setDosage("");
-    setNotes("");
-    setStartDate(new Date());
-    setTimes([new Date()]);
-    setEditScheduleIds([]);
-    setSelectedDays([]);
-    setMealRelation("ไม่ระบุ");
-    setErrors({});
-  }
-}, [isEdit]));
+    if (!isEdit) {
+      setName("");
+      setDosage("");
+      setNotes("");
+      setStartDate(new Date());
+      setTimes([new Date()]);
+      setEditScheduleIds([]);
+      setSelectedDays([]);
+      setMealRelation("ไม่ระบุ");
+      setErrors({});
+      setShowPickerIndex(null);
+    }
+  }, [isEdit]));
 
   /* ---------------- validation ---------------- */
 
@@ -318,14 +314,38 @@ export default function AddSchedule() {
     setTimes(copy);
   };
 
-  const updateTime = (event: any, selectedDate?: Date) => {
-    if (showPickerIndex === null) return;
-    if (selectedDate) {
+  // ✅ แก้ปัญหา iOS picker: แยก Android (อัปเดตทันที) vs iOS (ใช้ tempTime + ปุ่มยืนยัน)
+  const openPicker = (index: number) => {
+    setTempTime(new Date(times[index])); // copy ค่าปัจจุบันไว้ใน temp
+    setShowPickerIndex(index);
+  };
+
+  const onPickerChange = (event: any, selectedDate?: Date) => {
+    if (!selectedDate) return;
+
+    if (Platform.OS === "android") {
+      // Android: ปิด picker ทันทีและบันทึกค่าเลย
       const copy = [...times];
-      copy[showPickerIndex] = selectedDate;
+      copy[showPickerIndex!] = selectedDate;
       setTimes(copy);
+      setShowPickerIndex(null);
+    } else {
+      // iOS: เก็บไว้ใน temp ก่อน รอกดยืนยัน
+      setTempTime(selectedDate);
     }
-    if (Platform.OS !== "ios") setShowPickerIndex(null);
+  };
+
+  const confirmIOSTime = () => {
+    if (showPickerIndex === null) return;
+    const copy = [...times];
+    copy[showPickerIndex] = tempTime;
+    setTimes(copy);
+    setShowPickerIndex(null);
+  };
+
+  const cancelIOSTime = () => {
+    setShowPickerIndex(null);
+    // ไม่อัปเดต times → ค่าเดิมยังอยู่
   };
 
   /* ---------------- days ---------------- */
@@ -357,17 +377,12 @@ export default function AddSchedule() {
         selectedDays.length === 0 ? [0, 1, 2, 3, 4, 5, 6] : selectedDays;
 
       if (isEdit && editScheduleIds.length > 0) {
-
-        // ✅ PUT เวลาที่ยังมีอยู่ (index ตรงกับ editScheduleIds)
         for (let i = 0; i < times.length; i++) {
           if (i < editScheduleIds.length) {
-            // อัพเดท schedule เดิม
             await axios.put(
               `${API_BASE_URL}/caregiver/schedules/${editScheduleIds[i]}`,
               {
-                name,
-                dosage,
-                notes,
+                name, dosage, notes,
                 timeHHMM: formatTime(times[i]),
                 daysOfWeek: daysToSend,
                 mealRelation,
@@ -375,15 +390,12 @@ export default function AddSchedule() {
               { headers: { Authorization: `Bearer ${token}` } }
             );
           } else {
-            // ✅ เวลาใหม่ที่ผู้ใช้เพิ่มเข้ามา (เกิน editScheduleIds) — POST
             await axios.post(
               `${API_BASE_URL}/caregiver/schedules`,
               {
                 elderlyUserId: Number(elderlyId),
-                name,
-                dosage,
+                name, dosage, notes,
                 timeHHMM: formatTime(times[i]),
-                notes,
                 daysOfWeek: daysToSend,
                 mealRelation,
               },
@@ -392,8 +404,6 @@ export default function AddSchedule() {
           }
         }
 
-        // ✅ Bug fix: ลบ schedule ที่ผู้ใช้ลบออกไปใน UI
-        // เช่น มี 3 เวลาเดิม แต่ผู้ใช้ลบเหลือ 1 → DELETE scheduleIds[1] และ [2]
         if (editScheduleIds.length > times.length) {
           const idsToDelete = editScheduleIds.slice(times.length);
           for (const sid of idsToDelete) {
@@ -403,18 +413,14 @@ export default function AddSchedule() {
             );
           }
         }
-
       } else {
-        // ✅ Create mode — POST ทีละเวลา
         for (const time of times) {
           await axios.post(
             `${API_BASE_URL}/caregiver/schedules`,
             {
               elderlyUserId: Number(elderlyId),
-              name,
-              dosage,
+              name, dosage, notes,
               timeHHMM: formatTime(time),
-              notes,
               daysOfWeek: daysToSend,
               mealRelation,
               startDate: formatDateAPI(startDate),
@@ -450,9 +456,7 @@ export default function AddSchedule() {
 
   if (loadingData) {
     return (
-      <View
-        style={[s.container, { justifyContent: "center", alignItems: "center" }]}
-      >
+      <View style={[s.container, { justifyContent: "center", alignItems: "center" }]}>
         <ActivityIndicator size="large" color="#2563EB" />
       </View>
     );
@@ -468,9 +472,40 @@ export default function AddSchedule() {
         />
       )}
 
+      {/* ✅ iOS Time Picker Modal — มีปุ่มยืนยัน/ยกเลิก */}
+      {Platform.OS === "ios" && showPickerIndex !== null && (
+        <Modal transparent animationType="slide">
+          <Pressable
+            style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "flex-end" }}
+            onPress={cancelIOSTime}
+          >
+            <Pressable
+              style={{ backgroundColor: "white", borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingBottom: 32 }}
+              onPress={(e) => e.stopPropagation()}
+            >
+              <View style={{ flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 20, paddingTop: 16, paddingBottom: 8 }}>
+                <Pressable onPress={cancelIOSTime}>
+                  <Text style={{ fontSize: 16, color: "#94A3B8", fontWeight: "600" }}>ยกเลิก</Text>
+                </Pressable>
+                <Pressable onPress={confirmIOSTime}>
+                  <Text style={{ fontSize: 16, color: "#2563EB", fontWeight: "700" }}>ยืนยัน</Text>
+                </Pressable>
+              </View>
+              <DateTimePicker
+                value={tempTime}
+                mode="time"
+                is24Hour
+                display="spinner"
+                onChange={onPickerChange}
+                style={{ height: 180 }}
+              />
+            </Pressable>
+          </Pressable>
+        </Modal>
+      )}
+
       {/* Header */}
       <View style={s.header}>
-        
         <Pressable style={s.backBtn} onPress={() => router.replace({
           pathname: "/caregiver/schedule",
           params: { elderlyId, elderlyName },
@@ -536,26 +571,24 @@ export default function AddSchedule() {
             <View key={index} style={s.timeRow}>
               <Pressable
                 style={s.timeBox}
-                onPress={() => setShowPickerIndex(index)}
+                onPress={() => openPicker(index)}
               >
                 <Ionicons name="alarm-outline" size={16} color="#1D4ED8" />
                 <Text style={s.timeText}>{formatTime(time)}</Text>
               </Pressable>
 
-              <Pressable
-                style={s.removeBtn}
-                onPress={() => removeTime(index)}
-              >
+              <Pressable style={s.removeBtn} onPress={() => removeTime(index)}>
                 <Ionicons name="trash-outline" size={16} color="#EF4444" />
               </Pressable>
 
-              {showPickerIndex === index && (
+              {/* Android only — inline picker */}
+              {Platform.OS === "android" && showPickerIndex === index && (
                 <DateTimePicker
                   value={time}
                   mode="time"
                   is24Hour
                   display="default"
-                  onChange={updateTime}
+                  onChange={onPickerChange}
                 />
               )}
             </View>
@@ -575,18 +608,11 @@ export default function AddSchedule() {
           </View>
 
           <Pressable
-            style={[
-              s.allDaysBtn,
-              selectedDays.length === 7 && s.allDaysActive,
-            ]}
+            style={[s.allDaysBtn, selectedDays.length === 7 && s.allDaysActive]}
             onPress={toggleAllDays}
           >
             <Ionicons
-              name={
-                selectedDays.length === 7
-                  ? "checkmark-circle"
-                  : "ellipse-outline"
-              }
+              name={selectedDays.length === 7 ? "checkmark-circle" : "ellipse-outline"}
               size={16}
               color="white"
             />
@@ -619,10 +645,7 @@ export default function AddSchedule() {
               <Text style={s.cardTitle}>วันที่เริ่มต้น</Text>
             </View>
 
-            <Pressable
-              style={s.dateBox}
-              onPress={() => setShowCalendar(true)}
-            >
+            <Pressable style={s.dateBox} onPress={() => setShowCalendar(true)}>
               <Ionicons name="calendar-outline" size={18} color="#1D4ED8" />
               <Text style={s.dateText}>{formatDateDisplay(startDate)}</Text>
               <Ionicons name="chevron-down" size={16} color="#9CA3AF" />
@@ -680,18 +703,13 @@ export default function AddSchedule() {
 
         {/* Buttons */}
         <View style={s.btnRow}>
-          
           <Pressable style={s.cancelBtn} onPress={() => router.replace({
             pathname: "/caregiver/schedule",
             params: { elderlyId, elderlyName },
           })}>
             <Text style={s.cancelText}>ยกเลิก</Text>
           </Pressable>
-          <Pressable
-            style={s.saveBtn}
-            onPress={handleSave}
-            disabled={saving}
-          >
+          <Pressable style={s.saveBtn} onPress={handleSave} disabled={saving}>
             {saving ? (
               <ActivityIndicator size="small" color="white" />
             ) : (
@@ -724,196 +742,96 @@ const s = StyleSheet.create({
     borderBottomColor: "#E0F0FF",
   },
   backBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
+    width: 36, height: 36, borderRadius: 10,
     backgroundColor: "#EFF6FF",
-    justifyContent: "center",
-    alignItems: "center",
+    justifyContent: "center", alignItems: "center",
   },
   headerTitle: { fontSize: 17, fontWeight: "700", color: "#1E3A5F" },
   nameBadge: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: "row", alignItems: "center",
     backgroundColor: "#EFF6FF",
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 20,
-    marginTop: 3,
-    gap: 4,
+    paddingHorizontal: 8, paddingVertical: 2,
+    borderRadius: 20, marginTop: 3, gap: 4,
   },
   headerSub: { fontSize: 11, color: "#1D4ED8", fontWeight: "600" },
   card: {
-    backgroundColor: "white",
-    borderRadius: 16,
-    padding: 16,
-    marginHorizontal: 16,
-    marginTop: 12,
-    shadowColor: "#93C5FD",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 2,
+    backgroundColor: "white", borderRadius: 16, padding: 16,
+    marginHorizontal: 16, marginTop: 12,
+    shadowColor: "#93C5FD", shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15, shadowRadius: 8, elevation: 2,
   },
   cardTitleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginBottom: 12,
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: "#EFF6FF",
+    flexDirection: "row", alignItems: "center", gap: 6,
+    marginBottom: 12, paddingBottom: 10,
+    borderBottomWidth: 1, borderBottomColor: "#EFF6FF",
   },
   cardTitle: { fontSize: 14, fontWeight: "700", color: "#1E3A5F" },
-  label: {
-    fontSize: 13,
-    color: "#374151",
-    marginBottom: 6,
-    marginTop: 10,
-    fontWeight: "500",
-  },
+  label: { fontSize: 13, color: "#374151", marginBottom: 6, marginTop: 10, fontWeight: "500" },
   required: { color: "#EF4444" },
   input: {
-    backgroundColor: "#F8FAFC",
-    borderRadius: 10,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
-    fontSize: 14,
-    color: "#1E293B",
+    backgroundColor: "#F8FAFC", borderRadius: 10, padding: 12,
+    borderWidth: 1, borderColor: "#E2E8F0", fontSize: 14, color: "#1E293B",
   },
   inputError: { borderColor: "#EF4444", backgroundColor: "#FFF5F5" },
-  timeRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 8,
-    gap: 8,
-  },
+  timeRow: { flexDirection: "row", alignItems: "center", marginBottom: 8, gap: 8 },
   timeBox: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#EFF6FF",
-    borderRadius: 10,
-    padding: 12,
-    gap: 8,
-    borderWidth: 1,
-    borderColor: "#BFDBFE",
+    flex: 1, flexDirection: "row", alignItems: "center",
+    backgroundColor: "#EFF6FF", borderRadius: 10, padding: 12, gap: 8,
+    borderWidth: 1, borderColor: "#BFDBFE",
   },
   timeText: { fontSize: 16, fontWeight: "700", color: "#1D4ED8" },
   removeBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    backgroundColor: "#FFF5F5",
-    justifyContent: "center",
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#FECACA",
+    width: 40, height: 40, borderRadius: 10,
+    backgroundColor: "#FFF5F5", justifyContent: "center", alignItems: "center",
+    borderWidth: 1, borderColor: "#FECACA",
   },
   addTimeBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#EFF6FF",
-    borderRadius: 10,
-    padding: 10,
-    marginTop: 4,
-    gap: 6,
-    borderWidth: 1,
-    borderColor: "#BFDBFE",
-    borderStyle: "dashed",
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    backgroundColor: "#EFF6FF", borderRadius: 10, padding: 10, marginTop: 4, gap: 6,
+    borderWidth: 1, borderColor: "#BFDBFE", borderStyle: "dashed",
   },
   addTimeText: { fontSize: 13, color: "#1D4ED8", fontWeight: "600" },
   allDaysBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#93C5FD",
-    borderRadius: 10,
-    padding: 10,
-    marginBottom: 10,
-    gap: 6,
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    backgroundColor: "#93C5FD", borderRadius: 10, padding: 10, marginBottom: 10, gap: 6,
   },
   allDaysActive: { backgroundColor: "#1D4ED8" },
   allDaysText: { color: "white", fontWeight: "700", fontSize: 14 },
   weekRow: { flexDirection: "row", gap: 4 },
-  dayBtn: {
-    flex: 1,
-    paddingVertical: 10,
-    backgroundColor: "#F1F5F9",
-    borderRadius: 8,
-    alignItems: "center",
-  },
+  dayBtn: { flex: 1, paddingVertical: 10, backgroundColor: "#F1F5F9", borderRadius: 8, alignItems: "center" },
   dayActive: { backgroundColor: "#2563EB" },
   dayText: { fontSize: 12, fontWeight: "600", color: "#64748B" },
   dayTextActive: { color: "white" },
   dateBox: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#EFF6FF",
-    borderRadius: 10,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: "#BFDBFE",
-    gap: 10,
+    flexDirection: "row", alignItems: "center",
+    backgroundColor: "#EFF6FF", borderRadius: 10, padding: 12,
+    borderWidth: 1, borderColor: "#BFDBFE", gap: 10,
   },
   dateText: { flex: 1, fontSize: 15, color: "#1D4ED8", fontWeight: "600" },
   mealGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   mealBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: "#F1F5F9",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
+    flexDirection: "row", alignItems: "center", gap: 6,
+    backgroundColor: "#F1F5F9", paddingHorizontal: 12, paddingVertical: 8,
+    borderRadius: 10, borderWidth: 1, borderColor: "#E2E8F0",
   },
   mealActive: { backgroundColor: "#2563EB", borderColor: "#2563EB" },
   mealText: { fontSize: 13, color: "#64748B", fontWeight: "500" },
   mealTextActive: { color: "white", fontWeight: "600" },
   textarea: {
-    backgroundColor: "#F8FAFC",
-    borderRadius: 10,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
-    fontSize: 14,
-    color: "#1E293B",
-    minHeight: 80,
+    backgroundColor: "#F8FAFC", borderRadius: 10, padding: 12,
+    borderWidth: 1, borderColor: "#E2E8F0", fontSize: 14, color: "#1E293B", minHeight: 80,
   },
-  btnRow: {
-    flexDirection: "row",
-    marginHorizontal: 16,
-    marginTop: 20,
-    gap: 10,
-  },
+  btnRow: { flexDirection: "row", marginHorizontal: 16, marginTop: 20, gap: 10 },
   cancelBtn: {
-    flex: 1,
-    backgroundColor: "white",
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
-    padding: 14,
-    borderRadius: 12,
-    alignItems: "center",
+    flex: 1, backgroundColor: "white", borderWidth: 1, borderColor: "#E2E8F0",
+    padding: 14, borderRadius: 12, alignItems: "center",
   },
   cancelText: { color: "#64748B", fontWeight: "600", fontSize: 15 },
   saveBtn: {
-    flex: 2,
-    backgroundColor: "#2563EB",
-    padding: 14,
-    borderRadius: 12,
-    alignItems: "center",
-    flexDirection: "row",
-    justifyContent: "center",
-    gap: 6,
-    shadowColor: "#2563EB",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
+    flex: 2, backgroundColor: "#2563EB", padding: 14, borderRadius: 12,
+    alignItems: "center", flexDirection: "row", justifyContent: "center", gap: 6,
+    shadowColor: "#2563EB", shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3, shadowRadius: 8, elevation: 4,
   },
   saveText: { color: "white", fontWeight: "700", fontSize: 15 },
 });
@@ -922,62 +840,34 @@ const s = StyleSheet.create({
 
 const cal = StyleSheet.create({
   overlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.4)",
-    justifyContent: "center",
-    alignItems: "center",
+    flex: 1, backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "center", alignItems: "center",
   },
   card: {
-    backgroundColor: "white",
-    borderRadius: 20,
-    padding: 20,
-    width: 320,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.2,
-    shadowRadius: 16,
-    elevation: 10,
+    backgroundColor: "white", borderRadius: 20, padding: 20, width: 320,
+    shadowColor: "#000", shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.2, shadowRadius: 16, elevation: 10,
   },
   navRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 16,
+    flexDirection: "row", alignItems: "center",
+    justifyContent: "space-between", marginBottom: 16,
   },
   navBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: "#EFF6FF",
-    justifyContent: "center",
-    alignItems: "center",
+    width: 32, height: 32, borderRadius: 8,
+    backgroundColor: "#EFF6FF", justifyContent: "center", alignItems: "center",
   },
   monthLabel: { fontSize: 16, fontWeight: "700", color: "#1E3A5F" },
   weekHeader: { flexDirection: "row", marginBottom: 8 },
-  weekLabel: {
-    flex: 1,
-    textAlign: "center",
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#93C5FD",
-  },
+  weekLabel: { flex: 1, textAlign: "center", fontSize: 12, fontWeight: "600", color: "#93C5FD" },
   grid: { flexDirection: "row", flexWrap: "wrap" },
-  cell: {
-    width: `${100 / 7}%`,
-    aspectRatio: 1,
-    justifyContent: "center",
-    alignItems: "center",
-  },
+  cell: { width: `${100 / 7}%`, aspectRatio: 1, justifyContent: "center", alignItems: "center" },
   cellSelected: { backgroundColor: "#2563EB", borderRadius: 8 },
   cellToday: { borderWidth: 1.5, borderColor: "#2563EB", borderRadius: 8 },
   cellText: { fontSize: 14, color: "#1E293B", fontWeight: "500" },
   cellTextSelected: { color: "white", fontWeight: "700" },
   cellTextPast: { color: "#CBD5E1" },
   closeBtn: {
-    marginTop: 16,
-    alignItems: "center",
-    paddingVertical: 8,
-    borderTopWidth: 1,
-    borderTopColor: "#F1F5F9",
+    marginTop: 16, alignItems: "center", paddingVertical: 8,
+    borderTopWidth: 1, borderTopColor: "#F1F5F9",
   },
 });

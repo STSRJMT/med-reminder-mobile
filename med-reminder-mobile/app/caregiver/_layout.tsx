@@ -11,26 +11,22 @@ async function registerFCMToken() {
   try {
     console.log("calling registerFCMToken...");
 
-    // ✅ เช็คว่า login แล้วจริงๆ ก่อน
     const authToken = await AsyncStorage.getItem("token");
     if (!authToken) {
       console.log("Not logged in, skip registerFCMToken");
       return;
     }
 
-    // ขอสิทธิ์
     const { status } = await Notifications.requestPermissionsAsync();
     if (status !== "granted") {
       console.log("Permission not granted");
       return;
     }
 
-    // ดึง Expo Push Token
     const tokenData = await Notifications.getExpoPushTokenAsync();
     const token = tokenData.data;
     console.log("Push token:", token);
 
-    // ส่งไปเก็บใน DB
     await axios.post(
       `${API_BASE_URL}/caregiver/fcm-token`,
       { token },
@@ -69,6 +65,16 @@ export default function CaregiverTabLayout() {
         tabBarLabelStyle: { fontSize: 11, fontWeight: "700", marginTop: 2 },
       }}
     >
+      {/* ซ่อน dashboard ไม่ให้ขึ้น tab bar */}
+      <Tabs.Screen
+  name="dashboard"
+  options={{ 
+    href: null, 
+    tabBarItemStyle: { display: "none" },
+    tabBarStyle: { display: "none" },  // ← เพิ่มบรรทัดนี้
+  }}
+/>
+
       <Tabs.Screen
         name="elderly-list"
         options={{
@@ -102,7 +108,10 @@ export default function CaregiverTabLayout() {
           ),
         }}
       />
-      <Tabs.Screen name="(stack)" options={{ href: null, tabBarItemStyle: { display: "none" } }} />
+      <Tabs.Screen
+        name="(stack)"
+        options={{ href: null, tabBarItemStyle: { display: "none" } }}
+      />
     </Tabs>
   );
 }

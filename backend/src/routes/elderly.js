@@ -71,15 +71,20 @@ router.post("/schedules", auth(["elderly"]), async (req, res) => {
     const { name, dosage, notes, timeHHMM, daysOfWeek, mealRelation } = req.body;
     if (!name || !timeHHMM)
       return res.status(400).json({ message: "ข้อมูลไม่ครบ" });
+
+    // ✅ บันทึก start_date เป็นวันที่สร้างอัตโนมัติ
+    const { dateStr } = toLocalDT(new Date());
+
     const [medResult] = await db.query(
       `INSERT INTO medications (elderly_user_id, name, dosage, notes) VALUES (?, ?, ?, ?)`,
       [req.user.id, name, dosage || null, notes || null]
     );
     await db.query(
-      `INSERT INTO schedules (medication_id, time_hhmm, days_of_week, meal_relation) VALUES (?, ?, ?, ?)`,
+      `INSERT INTO schedules (medication_id, time_hhmm, days_of_week, meal_relation, start_date) VALUES (?, ?, ?, ?, ?)`,
       [medResult.insertId, timeHHMM,
        Array.isArray(daysOfWeek) ? daysOfWeek.join(",") : daysOfWeek || null,
-       mealRelation || null]
+       mealRelation || null,
+       dateStr]
     );
     res.json({ ok: true });
   } catch (err) {
@@ -138,7 +143,6 @@ router.delete("/schedules/:id", auth(["elderly"]), async (req, res) => {
   }
 });
 
-
 // GET /elderly/today?date=YYYY-MM-DD
 router.get("/today", auth(["elderly"]), async (req, res) => {
   const { date } = req.query;
@@ -153,10 +157,10 @@ router.get("/today", auth(["elderly"]), async (req, res) => {
                AND DATE(il.taken_at) = ? ORDER BY il.taken_at DESC LIMIT 1) AS todayStatus
      FROM schedules s JOIN medications m ON m.id = s.medication_id
      WHERE m.elderly_user_id = ?
-       AND (s.start_date IS NULL OR s.start_date <= ?)
+       AND (s.start_date IS NULL OR DATE(s.start_date) <= DATE(?))
        AND (s.days_of_week IS NULL OR FIND_IN_SET(?, REPLACE(s.days_of_week, ' ', '')) > 0)
      ORDER BY s.time_hhmm ASC`,
-    [req.user.id, date, req.user.id, date, dow]  // ✅ เพิ่ม date ตรงกลาง
+    [req.user.id, date, req.user.id, date, dow]
   );
   res.json({ date, dow, items: rows });
 });
@@ -168,7 +172,6 @@ router.post("/intake", auth(["elderly"]), async (req, res) => {
   if (!["taken", "late", "missed"].includes(status))
     return res.status(400).json({ message: "status must be taken | late | missed" });
 
-  // ✅ ใช้ local time แทน UTC เพื่อไม่ให้วันผิดใน timezone ไทย
   const takenAt = takenAtISO ? new Date(takenAtISO) : new Date();
   const { mysqlDT, dateStr } = toLocalDT(takenAt);
 
@@ -224,6 +227,65 @@ router.post("/intake", auth(["elderly"]), async (req, res) => {
   }
 });
 
+/* ===============================
+   AUTO-MARK MISSED (ผู้สูงอายุเรียกเอง)
+   ✅ ใช้ 60 นาที เพื่อให้ผู้สูงอายุมีเวลากดยืนยันมากขึ้น
+================================= */
+const MISSED_GRACE_MINUTES = 60;
+
+router.post("/auto-missed", auth(["elderly"]), async (req, res) => {
+  try {
+    const elderlyId = req.user.id;
+    const now = new Date();
+    const { dateStr } = toLocalDT(now);
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    const todayDayNum = now.getDay();
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+
+    const [schedules] = await db.query(
+      `SELECT s.id, s.time_hhmm, s.days_of_week, s.start_date
+       FROM schedules s
+       JOIN medications m ON m.id = s.medication_id
+       WHERE m.elderly_user_id = ?`,
+      [elderlyId]
+    );
+
+    for (const s of schedules) {
+      if (s.start_date) {
+        const start = new Date(s.start_date); start.setHours(0, 0, 0, 0);
+        if (start > today) continue;
+      }
+      if (s.days_of_week) {
+        const days = s.days_of_week.split(",").map(d => parseInt(d.trim()));
+        if (!days.includes(todayDayNum)) continue;
+      }
+
+      const [h, m] = s.time_hhmm.split(":").map(Number);
+      const scheduleMinutes = h * 60 + m;
+      if (currentMinutes < scheduleMinutes + MISSED_GRACE_MINUTES) continue;
+
+      const [existing] = await db.query(
+        `SELECT id FROM intake_logs
+         WHERE schedule_id = ? AND elderly_user_id = ? AND DATE(taken_at) = ?`,
+        [s.id, elderlyId, dateStr]
+      );
+      if (existing.length > 0) continue;
+
+      const { mysqlDT } = toLocalDT(now);
+      await db.query(
+        `INSERT INTO intake_logs (schedule_id, elderly_user_id, status, taken_at)
+         VALUES (?, ?, 'missed', ?)`,
+        [s.id, elderlyId, mysqlDT]
+      );
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("AUTO MISSED ERROR:", err);
+    res.status(500).json({ message: "server error" });
+  }
+});
+
 // GET /elderly/report
 router.get("/report", auth(["elderly"]), async (req, res) => {
   try {
@@ -276,7 +338,7 @@ router.get("/report", auth(["elderly"]), async (req, res) => {
       `SELECT s.id, s.days_of_week, s.start_date, m.id AS med_id, m.name AS med_name
        FROM schedules s JOIN medications m ON m.id = s.medication_id
        WHERE m.elderly_user_id = ?
-         AND (s.start_date IS NULL OR s.start_date <= ?)`,
+         AND (s.start_date IS NULL OR DATE(s.start_date) <= DATE(?))`,
       [elderlyId, endDate]
     );
 

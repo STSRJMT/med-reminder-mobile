@@ -168,6 +168,7 @@ export default function ElderlyAddSchedule() {
       setStartDate(new Date()); setTimes([new Date()]);
       setEditScheduleIds([]); setSelectedDays([]);
       setMealRelation("ไม่ระบุ"); setErrors({});
+      setShowPickerIndex(null);
     }
   }, [isEdit]));
 
@@ -198,7 +199,9 @@ export default function ElderlyAddSchedule() {
   const updateTime = (event: any, selectedDate?: Date) => {
     if (showPickerIndex === null) return;
     if (selectedDate) {
-      const copy = [...times]; copy[showPickerIndex] = selectedDate; setTimes(copy);
+      const copy = [...times];
+      copy[showPickerIndex] = selectedDate;
+      setTimes(copy);
     }
     if (Platform.OS !== "ios") setShowPickerIndex(null);
   };
@@ -256,7 +259,7 @@ export default function ElderlyAddSchedule() {
       Alert.alert("สำเร็จ ✓", isEdit ? "แก้ไขรายการยาเรียบร้อยแล้ว" : "เพิ่มรายการยาเรียบร้อยแล้ว", [
         { text: "ตกลง", onPress: () => router.back() },
       ]);
-    } catch (err: any) {
+    } catch {
       Alert.alert("ผิดพลาด", "ไม่สามารถบันทึกได้");
     } finally {
       setSaving(false);
@@ -319,7 +322,13 @@ export default function ElderlyAddSchedule() {
                 <Ionicons name="trash-outline" size={16} color="#EF4444" />
               </Pressable>
               {showPickerIndex === index && (
-                <DateTimePicker value={time} mode="time" is24Hour display="default" onChange={updateTime} />
+                <DateTimePicker
+                  value={time}
+                  mode="time"
+                  is24Hour
+                  display="default"
+                  onChange={updateTime}
+                />
               )}
             </View>
           ))}
@@ -351,7 +360,7 @@ export default function ElderlyAddSchedule() {
           </View>
         </View>
 
-        {/* วันที่เริ่มต้น — แสดงเฉพาะตอนเพิ่ม */}
+        {/* วันที่เริ่มต้น */}
         {!isEdit && (
           <View style={s.card}>
             <View style={s.cardTitleRow}>
