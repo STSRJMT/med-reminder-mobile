@@ -1,5 +1,11 @@
 node_modules/
 .env
 *.log
+
+# Firebase (สำคัญ)
 backend/*firebase-adminsdk*.json
+google-services.json
+GoogleService-Info.plist
+
+# Expo
 .expo
