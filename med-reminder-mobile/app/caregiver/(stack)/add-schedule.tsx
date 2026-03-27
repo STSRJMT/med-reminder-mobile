@@ -18,6 +18,15 @@ import axios from "axios";
 import { API_BASE_URL } from "../../../src/config";
 import DateTimePicker from "@react-native-community/datetimepicker";
 
+/* ---------------- types ---------------- */
+
+interface MedicineItem {
+  id: string;        // unique key สำหรับ render
+  name: string;
+  dosage: string;
+  notes: string;
+}
+
 /* ---------------- helpers ---------------- */
 
 const formatTime = (date: Date) => {
@@ -36,7 +45,7 @@ const formatDateDisplay = (date: Date) => {
 
 const formatDateAPI = (date: Date) => {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-}
+};
 
 const weekDays = [
   { label: "อา", value: 0 },
@@ -54,6 +63,8 @@ const mealOptions = [
   { label: "หลังอาหาร", icon: "checkmark-circle-outline" },
   { label: "พร้อมอาหาร", icon: "fast-food-outline" },
 ];
+
+const makeId = () => Math.random().toString(36).slice(2, 8);
 
 /* ---------------- Calendar Component ---------------- */
 
@@ -86,79 +97,45 @@ const MiniCalendar = ({
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const prevMonth = () => {
-    const d = new Date(viewDate);
-    d.setMonth(d.getMonth() - 1);
-    setViewDate(d);
-  };
-
-  const nextMonth = () => {
-    const d = new Date(viewDate);
-    d.setMonth(d.getMonth() + 1);
-    setViewDate(d);
-  };
-
   return (
     <Modal transparent animationType="fade">
       <Pressable style={cal.overlay} onPress={onClose}>
         <Pressable style={cal.card} onPress={(e) => e.stopPropagation()}>
           <View style={cal.navRow}>
-            <Pressable onPress={prevMonth} style={cal.navBtn}>
+            <Pressable onPress={() => { const d = new Date(viewDate); d.setMonth(d.getMonth() - 1); setViewDate(d); }} style={cal.navBtn}>
               <Ionicons name="chevron-back" size={20} color="#1D4ED8" />
             </Pressable>
-            <Text style={cal.monthLabel}>
-              {thMonths[month]} {year + 543}
-            </Text>
-            <Pressable onPress={nextMonth} style={cal.navBtn}>
+            <Text style={cal.monthLabel}>{thMonths[month]} {year + 543}</Text>
+            <Pressable onPress={() => { const d = new Date(viewDate); d.setMonth(d.getMonth() + 1); setViewDate(d); }} style={cal.navBtn}>
               <Ionicons name="chevron-forward" size={20} color="#1D4ED8" />
             </Pressable>
           </View>
-
           <View style={cal.weekHeader}>
             {["อา", "จ", "อ", "พ", "พฤ", "ศ", "ส"].map((d) => (
               <Text key={d} style={cal.weekLabel}>{d}</Text>
             ))}
           </View>
-
           <View style={cal.grid}>
             {cells.map((day, i) => {
               if (!day) return <View key={`e-${i}`} style={cal.cell} />;
               const cellDate = new Date(year, month, day);
               cellDate.setHours(0, 0, 0, 0);
-              const isSelected =
-                cellDate.toDateString() === selectedDate.toDateString();
+              const isSelected = cellDate.toDateString() === selectedDate.toDateString();
               const isToday = cellDate.toDateString() === today.toDateString();
               const isPast = cellDate < today;
-
               return (
                 <Pressable
                   key={day}
-                  style={[
-                    cal.cell,
-                    isSelected && cal.cellSelected,
-                    isToday && !isSelected && cal.cellToday,
-                  ]}
-                  onPress={() => {
-                    if (!isPast || isToday) {
-                      onSelect(cellDate);
-                      onClose();
-                    }
-                  }}
+                  style={[cal.cell, isSelected && cal.cellSelected, isToday && !isSelected && cal.cellToday]}
+                  onPress={() => { if (!isPast || isToday) { onSelect(cellDate); onClose(); } }}
                 >
-                  <Text
-                    style={[
-                      cal.cellText,
-                      isSelected && cal.cellTextSelected,
-                      isPast && !isToday && cal.cellTextPast,
-                    ]}
-                  >
+                  <Text style={[cal.cellText, isSelected && cal.cellTextSelected, isPast && !isToday && cal.cellTextPast]}>
                     {day}
                   </Text>
                 </Pressable>
               );
             })}
           </View>
-
           <Pressable style={cal.closeBtn} onPress={onClose}>
             <Text style={{ color: "#6B7280", fontSize: 14 }}>ปิด</Text>
           </Pressable>
@@ -185,15 +162,16 @@ export default function AddSchedule() {
   const [loadingData, setLoadingData] = useState(isEdit);
   const [saving, setSaving] = useState(false);
 
-  const [name, setName] = useState("");
-  const [dosage, setDosage] = useState("");
-  const [notes, setNotes] = useState("");
+  // ✅ medicines array แทน name/dosage เดี่ยว
+  const [medicines, setMedicines] = useState<MedicineItem[]>([
+    { id: makeId(), name: "", dosage: "", notes: "" },
+  ]);
+
   const [startDate, setStartDate] = useState(new Date());
   const [showCalendar, setShowCalendar] = useState(false);
 
   const [times, setTimes] = useState<Date[]>([new Date()]);
   const [showPickerIndex, setShowPickerIndex] = useState<number | null>(null);
-  // ✅ เก็บค่า temp ระหว่างที่ iOS picker ยังเปิดอยู่
   const [tempTime, setTempTime] = useState<Date>(new Date());
 
   const [editScheduleIds, setEditScheduleIds] = useState<number[]>([]);
@@ -215,19 +193,20 @@ export default function AddSchedule() {
         );
         const d = res.data;
 
-        setName(d.medication_name || "");
-        setDosage(d.dosage || "");
-        setNotes(d.notes || "");
+        // โหลดข้อมูล days และ meal จาก schedule แรก
         setMealRelation(d.meal_relation || "ไม่ระบุ");
-
         if (d.days_of_week) {
-          const days = d.days_of_week
-            .split(",")
-            .map((v: string) => Number(v.trim()));
-          setSelectedDays(days);
+          setSelectedDays(d.days_of_week.split(",").map((v: string) => Number(v.trim())));
         }
 
+        // โหลดเวลาจาก schedule แรก (ทุก schedule ในกลุ่มใช้เวลาเดียวกัน)
+        const [hh, mm] = d.time_hhmm.split(":").map(Number);
+        const t = new Date();
+        t.setHours(hh, mm, 0, 0);
+        setTimes([t]);
+
         if (scheduleIds) {
+          // ✅ scheduleIds = ยาหลายตัวในเวลาเดียวกัน → โหลดเป็น medicines[]
           const ids = scheduleIds.split(",").map(Number);
           setEditScheduleIds(ids);
 
@@ -239,20 +218,22 @@ export default function AddSchedule() {
             )
           );
 
-          const allTimes = results.map((r) => {
-            const [hh, mm] = r.data.time_hhmm.split(":").map(Number);
-            const t = new Date();
-            t.setHours(hh, mm, 0, 0);
-            return t;
-          });
-
-          setTimes(allTimes);
+          // map แต่ละ schedule → medicine item
+          setMedicines(results.map((r) => ({
+            id: makeId(),
+            name: r.data.medication_name || "",
+            dosage: r.data.dosage || "",
+            notes: r.data.notes || "",
+          })));
         } else {
+          // ยาตัวเดียว
           setEditScheduleIds([Number(scheduleId)]);
-          const [hh, mm] = d.time_hhmm.split(":").map(Number);
-          const t = new Date();
-          t.setHours(hh, mm, 0, 0);
-          setTimes([t]);
+          setMedicines([{
+            id: makeId(),
+            name: d.medication_name || "",
+            dosage: d.dosage || "",
+            notes: d.notes || "",
+          }]);
         }
       } catch {
         Alert.alert("ผิดพลาด", "ไม่สามารถโหลดข้อมูลได้");
@@ -266,9 +247,7 @@ export default function AddSchedule() {
 
   useFocusEffect(useCallback(() => {
     if (!isEdit) {
-      setName("");
-      setDosage("");
-      setNotes("");
+      setMedicines([{ id: makeId(), name: "", dosage: "", notes: "" }]);
       setStartDate(new Date());
       setTimes([new Date()]);
       setEditScheduleIds([]);
@@ -279,11 +258,33 @@ export default function AddSchedule() {
     }
   }, [isEdit]));
 
+  /* ---------------- medicine helpers ---------------- */
+
+  const addMedicine = () => {
+    setMedicines([...medicines, { id: makeId(), name: "", dosage: "", notes: "" }]);
+  };
+
+  const removeMedicine = (id: string) => {
+    if (medicines.length === 1) {
+      Alert.alert("แจ้งเตือน", "ต้องมียาอย่างน้อย 1 รายการ");
+      return;
+    }
+    setMedicines(medicines.filter((m) => m.id !== id));
+  };
+
+  const updateMedicine = (id: string, field: keyof Omit<MedicineItem, "id">, value: string) => {
+    setMedicines(medicines.map((m) => m.id === id ? { ...m, [field]: value } : m));
+  };
+
   /* ---------------- validation ---------------- */
 
   const validate = () => {
     let newErrors: any = {};
-    if (!name.trim()) newErrors.name = true;
+
+    // เช็คว่ายาทุกตัวมีชื่อ
+    const hasEmptyName = medicines.some((m) => !m.name.trim());
+    if (hasEmptyName) newErrors.medicines = true;
+
     if (times.length === 0) newErrors.times = true;
 
     const formattedTimes = times.map(formatTime);
@@ -294,13 +295,13 @@ export default function AddSchedule() {
 
     setErrors(newErrors);
     if (Object.keys(newErrors).length > 0) {
-      Alert.alert("กรอกข้อมูลไม่ครบ", "กรุณากรอกข้อมูลที่จำเป็น");
+      Alert.alert("กรอกข้อมูลไม่ครบ", "กรุณากรอกชื่อยาให้ครบทุกรายการ");
       return false;
     }
     return true;
   };
 
-  /* ---------------- time ---------------- */
+  /* ---------------- time helpers ---------------- */
 
   const addTime = () => setTimes([...times, new Date()]);
 
@@ -314,23 +315,19 @@ export default function AddSchedule() {
     setTimes(copy);
   };
 
-  // ✅ แก้ปัญหา iOS picker: แยก Android (อัปเดตทันที) vs iOS (ใช้ tempTime + ปุ่มยืนยัน)
   const openPicker = (index: number) => {
-    setTempTime(new Date(times[index])); // copy ค่าปัจจุบันไว้ใน temp
+    setTempTime(new Date(times[index]));
     setShowPickerIndex(index);
   };
 
   const onPickerChange = (event: any, selectedDate?: Date) => {
     if (!selectedDate) return;
-
     if (Platform.OS === "android") {
-      // Android: ปิด picker ทันทีและบันทึกค่าเลย
       const copy = [...times];
       copy[showPickerIndex!] = selectedDate;
       setTimes(copy);
       setShowPickerIndex(null);
     } else {
-      // iOS: เก็บไว้ใน temp ก่อน รอกดยืนยัน
       setTempTime(selectedDate);
     }
   };
@@ -343,12 +340,9 @@ export default function AddSchedule() {
     setShowPickerIndex(null);
   };
 
-  const cancelIOSTime = () => {
-    setShowPickerIndex(null);
-    // ไม่อัปเดต times → ค่าเดิมยังอยู่
-  };
+  const cancelIOSTime = () => setShowPickerIndex(null);
 
-  /* ---------------- days ---------------- */
+  /* ---------------- days helpers ---------------- */
 
   const toggleDay = (day: number) => {
     setSelectedDays((prev) =>
@@ -377,25 +371,33 @@ export default function AddSchedule() {
         selectedDays.length === 0 ? [0, 1, 2, 3, 4, 5, 6] : selectedDays;
 
       if (isEdit && editScheduleIds.length > 0) {
-        for (let i = 0; i < times.length; i++) {
+        // ---- EDIT MODE ----
+        // ✅ แต่ละ editScheduleId ตรงกับยา 1 ตัว (medicines[i])
+        // เวลาใช้ times[0] เดียวกันทั้งกลุ่ม
+        const timeHHMM = formatTime(times[0]);
+
+        for (let i = 0; i < medicines.length; i++) {
+          const med = medicines[i];
           if (i < editScheduleIds.length) {
+            // อัปเดตยาที่มีอยู่แล้ว
             await axios.put(
               `${API_BASE_URL}/caregiver/schedules/${editScheduleIds[i]}`,
               {
-                name, dosage, notes,
-                timeHHMM: formatTime(times[i]),
+                name: med.name, dosage: med.dosage, notes: med.notes,
+                timeHHMM,
                 daysOfWeek: daysToSend,
                 mealRelation,
               },
               { headers: { Authorization: `Bearer ${token}` } }
             );
           } else {
+            // เพิ่มยาใหม่ที่ถูก add เข้ามาตอน edit
             await axios.post(
               `${API_BASE_URL}/caregiver/schedules`,
               {
                 elderlyUserId: Number(elderlyId),
-                name, dosage, notes,
-                timeHHMM: formatTime(times[i]),
+                name: med.name, dosage: med.dosage, notes: med.notes,
+                timeHHMM,
                 daysOfWeek: daysToSend,
                 mealRelation,
               },
@@ -404,8 +406,9 @@ export default function AddSchedule() {
           }
         }
 
-        if (editScheduleIds.length > times.length) {
-          const idsToDelete = editScheduleIds.slice(times.length);
+        // ลบยาที่ถูกลบออกตอน edit
+        if (editScheduleIds.length > medicines.length) {
+          const idsToDelete = editScheduleIds.slice(medicines.length);
           for (const sid of idsToDelete) {
             await axios.delete(
               `${API_BASE_URL}/caregiver/schedules/${sid}`,
@@ -414,19 +417,25 @@ export default function AddSchedule() {
           }
         }
       } else {
-        for (const time of times) {
-          await axios.post(
-            `${API_BASE_URL}/caregiver/schedules`,
-            {
-              elderlyUserId: Number(elderlyId),
-              name, dosage, notes,
-              timeHHMM: formatTime(time),
-              daysOfWeek: daysToSend,
-              mealRelation,
-              startDate: formatDateAPI(startDate),
-            },
-            { headers: { Authorization: `Bearer ${token}` } }
-          );
+        // ---- CREATE MODE ----
+        // ✅ วนทุกยา × ทุกเวลา → POST แต่ละคู่
+        for (const med of medicines) {
+          for (const time of times) {
+            await axios.post(
+              `${API_BASE_URL}/caregiver/schedules`,
+              {
+                elderlyUserId: Number(elderlyId),
+                name: med.name,
+                dosage: med.dosage,
+                notes: med.notes,
+                timeHHMM: formatTime(time),
+                daysOfWeek: daysToSend,
+                mealRelation,
+                startDate: formatDateAPI(startDate),
+              },
+              { headers: { Authorization: `Bearer ${token}` } }
+            );
+          }
         }
       }
 
@@ -472,7 +481,7 @@ export default function AddSchedule() {
         />
       )}
 
-      {/* ✅ iOS Time Picker Modal — มีปุ่มยืนยัน/ยกเลิก */}
+      {/* iOS Time Picker Modal */}
       {Platform.OS === "ios" && showPickerIndex !== null && (
         <Modal transparent animationType="slide">
           <Pressable
@@ -530,32 +539,78 @@ export default function AddSchedule() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 40 }}
       >
-        {/* Card: ข้อมูลยา */}
+
+        {/* ✅ Card: รายการยา (หลายรายการ) */}
         <View style={s.card}>
           <View style={s.cardTitleRow}>
             <Ionicons name="medical" size={16} color="#1D4ED8" />
-            <Text style={s.cardTitle}>ข้อมูลยา</Text>
+            <Text style={s.cardTitle}>รายการยา</Text>
+            {!isEdit && (
+              <View style={s.medicineBadge}>
+                <Text style={s.medicineBadgeText}>{medicines.length} รายการ</Text>
+              </View>
+            )}
           </View>
 
-          <Text style={s.label}>
-            ชื่อยา <Text style={s.required}>*</Text>
-          </Text>
-          <TextInput
-            style={[s.input, errors.name && s.inputError]}
-            value={name}
-            onChangeText={setName}
-            placeholder="เช่น พาราเซตามอล"
-            placeholderTextColor="#9CA3AF"
-          />
+          {medicines.map((med, index) => (
+            <View key={med.id} style={[s.medicineCard, errors.medicines && !med.name.trim() && s.medicineCardError]}>
+              {/* หัว card ยา */}
+              <View style={s.medicineCardHeader}>
+                <View style={s.medicineNumberBadge}>
+                  <Text style={s.medicineNumberText}>{index + 1}</Text>
+                </View>
+                <Text style={s.medicineCardTitle}>ยารายการที่ {index + 1}</Text>
+                {medicines.length > 1 && (
+  <Pressable style={s.removeMedicineBtn} onPress={() => removeMedicine(med.id)}>
+                    <Ionicons name="close-circle" size={20} color="#EF4444" />
+                  </Pressable>
+                )}
+              </View>
 
-          <Text style={s.label}>ขนาดยา</Text>
-          <TextInput
-            style={s.input}
-            value={dosage}
-            onChangeText={setDosage}
-            placeholder="เช่น 1 เม็ด / 5 ml"
-            placeholderTextColor="#9CA3AF"
-          />
+              {/* ชื่อยา */}
+              <Text style={s.label}>
+                ชื่อยา <Text style={s.required}>*</Text>
+              </Text>
+              <TextInput
+                style={[s.input, errors.medicines && !med.name.trim() && s.inputError]}
+                value={med.name}
+                onChangeText={(v) => updateMedicine(med.id, "name", v)}
+                placeholder="เช่น พาราเซตามอล"
+                placeholderTextColor="#9CA3AF"
+              />
+
+              {/* ขนาดยา */}
+              <Text style={s.label}>ขนาดยา</Text>
+              <TextInput
+                style={s.input}
+                value={med.dosage}
+                onChangeText={(v) => updateMedicine(med.id, "dosage", v)}
+                placeholder="เช่น 1 เม็ด / 5 ml"
+                placeholderTextColor="#9CA3AF"
+              />
+
+              {/* หมายเหตุ (ย้ายมาอยู่ใน card ยา) */}
+              <Text style={s.label}>หมายเหตุ</Text>
+              <TextInput
+                style={s.inputMultiline}
+                value={med.notes}
+                onChangeText={(v) => updateMedicine(med.id, "notes", v)}
+                placeholder="เช่น ห้ามบด / ต้องกินพร้อมน้ำมากๆ"
+                placeholderTextColor="#9CA3AF"
+                multiline
+                numberOfLines={2}
+                textAlignVertical="top"
+              />
+            </View>
+          ))}
+
+          
+         
+{/* ปุ่มเพิ่มยา */}
+<Pressable style={s.addMedicineBtn} onPress={addMedicine}>
+  <Ionicons name="add-circle" size={18} color="#059669" />
+  <Text style={s.addMedicineText}>เพิ่มยา</Text>
+</Pressable>
         </View>
 
         {/* Card: เวลา */}
@@ -569,10 +624,7 @@ export default function AddSchedule() {
 
           {times.map((time, index) => (
             <View key={index} style={s.timeRow}>
-              <Pressable
-                style={s.timeBox}
-                onPress={() => openPicker(index)}
-              >
+              <Pressable style={s.timeBox} onPress={() => openPicker(index)}>
                 <Ionicons name="alarm-outline" size={16} color="#1D4ED8" />
                 <Text style={s.timeText}>{formatTime(time)}</Text>
               </Pressable>
@@ -581,7 +633,6 @@ export default function AddSchedule() {
                 <Ionicons name="trash-outline" size={16} color="#EF4444" />
               </Pressable>
 
-              {/* Android only — inline picker */}
               {Platform.OS === "android" && showPickerIndex === index && (
                 <DateTimePicker
                   value={time}
@@ -598,6 +649,16 @@ export default function AddSchedule() {
             <Ionicons name="add-circle" size={18} color="#1D4ED8" />
             <Text style={s.addTimeText}>เพิ่มเวลา</Text>
           </Pressable>
+
+          {/* ✅ สรุปว่าจะ save กี่ entries */}
+          {!isEdit && medicines.length > 0 && times.length > 0 && (
+            <View style={s.summaryBox}>
+              <Ionicons name="information-circle-outline" size={14} color="#2563EB" />
+              <Text style={s.summaryText}>
+                จะบันทึกทั้งหมด {medicines.length} ยา × {times.length} เวลา = {medicines.length * times.length} รายการ
+              </Text>
+            </View>
+          )}
         </View>
 
         {/* Card: วัน */}
@@ -628,9 +689,7 @@ export default function AddSchedule() {
                   style={[s.dayBtn, active && s.dayActive]}
                   onPress={() => toggleDay(day.value)}
                 >
-                  <Text style={[s.dayText, active && s.dayTextActive]}>
-                    {day.label}
-                  </Text>
+                  <Text style={[s.dayText, active && s.dayTextActive]}>{day.label}</Text>
                 </Pressable>
               );
             })}
@@ -644,7 +703,6 @@ export default function AddSchedule() {
               <Ionicons name="today" size={16} color="#1D4ED8" />
               <Text style={s.cardTitle}>วันที่เริ่มต้น</Text>
             </View>
-
             <Pressable style={s.dateBox} onPress={() => setShowCalendar(true)}>
               <Ionicons name="calendar-outline" size={18} color="#1D4ED8" />
               <Text style={s.dateText}>{formatDateDisplay(startDate)}</Text>
@@ -659,7 +717,6 @@ export default function AddSchedule() {
             <Ionicons name="restaurant" size={16} color="#1D4ED8" />
             <Text style={s.cardTitle}>เวลาเทียบกับมื้ออาหาร</Text>
           </View>
-
           <View style={s.mealGrid}>
             {mealOptions.map((item) => {
               const active = mealRelation === item.label;
@@ -669,36 +726,12 @@ export default function AddSchedule() {
                   style={[s.mealBtn, active && s.mealActive]}
                   onPress={() => setMealRelation(item.label)}
                 >
-                  <Ionicons
-                    name={item.icon as any}
-                    size={18}
-                    color={active ? "white" : "#6B7280"}
-                  />
-                  <Text style={[s.mealText, active && s.mealTextActive]}>
-                    {item.label}
-                  </Text>
+                  <Ionicons name={item.icon as any} size={18} color={active ? "white" : "#6B7280"} />
+                  <Text style={[s.mealText, active && s.mealTextActive]}>{item.label}</Text>
                 </Pressable>
               );
             })}
           </View>
-        </View>
-
-        {/* Card: หมายเหตุ */}
-        <View style={s.card}>
-          <View style={s.cardTitleRow}>
-            <Ionicons name="create-outline" size={16} color="#1D4ED8" />
-            <Text style={s.cardTitle}>หมายเหตุ</Text>
-          </View>
-          <TextInput
-            style={s.textarea}
-            value={notes}
-            onChangeText={setNotes}
-            placeholder="เช่น ห้ามบด / ต้องกินพร้อมน้ำมากๆ"
-            placeholderTextColor="#9CA3AF"
-            multiline
-            numberOfLines={3}
-            textAlignVertical="top"
-          />
         </View>
 
         {/* Buttons */}
@@ -732,25 +765,18 @@ export default function AddSchedule() {
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#F0F9FF" },
   header: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 12,
-    backgroundColor: "white",
-    borderBottomWidth: 1,
-    borderBottomColor: "#E0F0FF",
+    flexDirection: "row", alignItems: "center",
+    paddingHorizontal: 16, paddingTop: 16, paddingBottom: 12,
+    backgroundColor: "white", borderBottomWidth: 1, borderBottomColor: "#E0F0FF",
   },
   backBtn: {
     width: 36, height: 36, borderRadius: 10,
-    backgroundColor: "#EFF6FF",
-    justifyContent: "center", alignItems: "center",
+    backgroundColor: "#EFF6FF", justifyContent: "center", alignItems: "center",
   },
   headerTitle: { fontSize: 17, fontWeight: "700", color: "#1E3A5F" },
   nameBadge: {
     flexDirection: "row", alignItems: "center",
-    backgroundColor: "#EFF6FF",
-    paddingHorizontal: 8, paddingVertical: 2,
+    backgroundColor: "#EFF6FF", paddingHorizontal: 8, paddingVertical: 2,
     borderRadius: 20, marginTop: 3, gap: 4,
   },
   headerSub: { fontSize: 11, color: "#1D4ED8", fontWeight: "600" },
@@ -766,13 +792,52 @@ const s = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: "#EFF6FF",
   },
   cardTitle: { fontSize: 14, fontWeight: "700", color: "#1E3A5F" },
-  label: { fontSize: 13, color: "#374151", marginBottom: 6, marginTop: 10, fontWeight: "500" },
+
+  // ✅ Medicine badge (แสดงจำนวน)
+  medicineBadge: {
+    marginLeft: "auto", backgroundColor: "#DBEAFE",
+    paddingHorizontal: 8, paddingVertical: 2, borderRadius: 20,
+  },
+  medicineBadgeText: { fontSize: 11, color: "#1D4ED8", fontWeight: "700" },
+
+  // ✅ Medicine card (กรอบแต่ละยา)
+  medicineCard: {
+    backgroundColor: "#F8FAFF", borderRadius: 12, padding: 12,
+    marginBottom: 10, borderWidth: 1, borderColor: "#DBEAFE",
+  },
+  medicineCardError: { borderColor: "#FCA5A5", backgroundColor: "#FFF5F5" },
+  medicineCardHeader: {
+    flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8,
+  },
+  medicineNumberBadge: {
+    width: 22, height: 22, borderRadius: 11,
+    backgroundColor: "#2563EB", justifyContent: "center", alignItems: "center",
+  },
+  medicineNumberText: { color: "white", fontSize: 11, fontWeight: "700" },
+  medicineCardTitle: { flex: 1, fontSize: 13, fontWeight: "600", color: "#1E3A5F" },
+  removeMedicineBtn: { padding: 2 },
+
+  // ✅ ปุ่มเพิ่มยา
+  addMedicineBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    backgroundColor: "#ECFDF5", borderRadius: 10, padding: 10, marginTop: 4, gap: 6,
+    borderWidth: 1, borderColor: "#6EE7B7", borderStyle: "dashed",
+  },
+  addMedicineText: { fontSize: 13, color: "#059669", fontWeight: "600" },
+
+  label: { fontSize: 13, color: "#374151", marginBottom: 6, marginTop: 8, fontWeight: "500" },
   required: { color: "#EF4444" },
   input: {
-    backgroundColor: "#F8FAFC", borderRadius: 10, padding: 12,
+    backgroundColor: "white", borderRadius: 10, padding: 12,
     borderWidth: 1, borderColor: "#E2E8F0", fontSize: 14, color: "#1E293B",
   },
   inputError: { borderColor: "#EF4444", backgroundColor: "#FFF5F5" },
+  inputMultiline: {
+    backgroundColor: "white", borderRadius: 10, padding: 12,
+    borderWidth: 1, borderColor: "#E2E8F0", fontSize: 14, color: "#1E293B",
+    minHeight: 60, textAlignVertical: "top",
+  },
+
   timeRow: { flexDirection: "row", alignItems: "center", marginBottom: 8, gap: 8 },
   timeBox: {
     flex: 1, flexDirection: "row", alignItems: "center",
@@ -791,6 +856,14 @@ const s = StyleSheet.create({
     borderWidth: 1, borderColor: "#BFDBFE", borderStyle: "dashed",
   },
   addTimeText: { fontSize: 13, color: "#1D4ED8", fontWeight: "600" },
+
+  // ✅ Summary box
+  summaryBox: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    backgroundColor: "#EFF6FF", borderRadius: 8, padding: 8, marginTop: 10,
+  },
+  summaryText: { fontSize: 12, color: "#2563EB", fontWeight: "500", flex: 1 },
+
   allDaysBtn: {
     flexDirection: "row", alignItems: "center", justifyContent: "center",
     backgroundColor: "#93C5FD", borderRadius: 10, padding: 10, marginBottom: 10, gap: 6,
@@ -817,10 +890,6 @@ const s = StyleSheet.create({
   mealActive: { backgroundColor: "#2563EB", borderColor: "#2563EB" },
   mealText: { fontSize: 13, color: "#64748B", fontWeight: "500" },
   mealTextActive: { color: "white", fontWeight: "600" },
-  textarea: {
-    backgroundColor: "#F8FAFC", borderRadius: 10, padding: 12,
-    borderWidth: 1, borderColor: "#E2E8F0", fontSize: 14, color: "#1E293B", minHeight: 80,
-  },
   btnRow: { flexDirection: "row", marginHorizontal: 16, marginTop: 20, gap: 10 },
   cancelBtn: {
     flex: 1, backgroundColor: "white", borderWidth: 1, borderColor: "#E2E8F0",
@@ -839,23 +908,13 @@ const s = StyleSheet.create({
 /* ---------------- Calendar styles ---------------- */
 
 const cal = StyleSheet.create({
-  overlay: {
-    flex: 1, backgroundColor: "rgba(0,0,0,0.4)",
-    justifyContent: "center", alignItems: "center",
-  },
+  overlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "center", alignItems: "center" },
   card: {
     backgroundColor: "white", borderRadius: 20, padding: 20, width: 320,
-    shadowColor: "#000", shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.2, shadowRadius: 16, elevation: 10,
+    shadowColor: "#000", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.2, shadowRadius: 16, elevation: 10,
   },
-  navRow: {
-    flexDirection: "row", alignItems: "center",
-    justifyContent: "space-between", marginBottom: 16,
-  },
-  navBtn: {
-    width: 32, height: 32, borderRadius: 8,
-    backgroundColor: "#EFF6FF", justifyContent: "center", alignItems: "center",
-  },
+  navRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 16 },
+  navBtn: { width: 32, height: 32, borderRadius: 8, backgroundColor: "#EFF6FF", justifyContent: "center", alignItems: "center" },
   monthLabel: { fontSize: 16, fontWeight: "700", color: "#1E3A5F" },
   weekHeader: { flexDirection: "row", marginBottom: 8 },
   weekLabel: { flex: 1, textAlign: "center", fontSize: 12, fontWeight: "600", color: "#93C5FD" },
@@ -866,8 +925,5 @@ const cal = StyleSheet.create({
   cellText: { fontSize: 14, color: "#1E293B", fontWeight: "500" },
   cellTextSelected: { color: "white", fontWeight: "700" },
   cellTextPast: { color: "#CBD5E1" },
-  closeBtn: {
-    marginTop: 16, alignItems: "center", paddingVertical: 8,
-    borderTopWidth: 1, borderTopColor: "#F1F5F9",
-  },
+  closeBtn: { marginTop: 16, alignItems: "center", paddingVertical: 8, borderTopWidth: 1, borderTopColor: "#F1F5F9" },
 });

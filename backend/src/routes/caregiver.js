@@ -5,7 +5,6 @@ const auth = require("../middleware/auth");
 
 const router = express.Router();
 
-// ✅ ส่ง Push ผ่าน Expo Push API
 async function sendExpoPush(expoPushToken, title, body) {
   try {
     await fetch("https://exp.host/--/api/v2/push/send", {
@@ -69,6 +68,13 @@ function countActiveDays(schedule, startDate, endDate) {
     cursor.setDate(cursor.getDate() + 1);
   }
   return count;
+}
+
+// ✅ แปลง takenAtISO เป็น MySQL datetime string (local time)
+function toMysqlDT(isoOrDate) {
+  const d = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
 /* ===============================
@@ -479,7 +485,6 @@ router.get("/report/:elderlyId", auth(["caregiver"]), async (req, res) => {
 
 /* ===============================
    AUTO-MARK MISSED
-   เรียกตอนโหลด report — ตรวจยาที่เลยเวลา 30 นาทีแล้วยังไม่กิน
 ================================= */
 router.post("/auto-missed/:elderlyId", auth(["caregiver"]), async (req, res) => {
   try {
@@ -506,7 +511,6 @@ router.post("/auto-missed/:elderlyId", auth(["caregiver"]), async (req, res) => 
     );
 
     for (const s of schedules) {
-      // เช็คว่าวันนี้ต้องกินมั้ย
       if (s.start_date) {
         const start = new Date(s.start_date); start.setHours(0, 0, 0, 0);
         if (start > today) continue;
@@ -516,12 +520,10 @@ router.post("/auto-missed/:elderlyId", auth(["caregiver"]), async (req, res) => 
         if (!days.includes(todayDayNum)) continue;
       }
 
-      // เช็คว่าเลยเวลากิน + 30 นาทีแล้วหรือยัง
       const [h, m] = s.time_hhmm.split(":").map(Number);
       const scheduleMinutes = h * 60 + m;
       if (currentMinutes < scheduleMinutes + 60) continue;
 
-      // เช็คว่ามี log วันนี้แล้วหรือยัง
       const [existing] = await db.query(
         `SELECT id FROM intake_logs
          WHERE schedule_id = ? AND elderly_user_id = ? AND DATE(taken_at) = ?`,
@@ -529,7 +531,6 @@ router.post("/auto-missed/:elderlyId", auth(["caregiver"]), async (req, res) => 
       );
       if (existing.length > 0) continue;
 
-      // บันทึก missed
       await db.query(
         `INSERT INTO intake_logs (schedule_id, elderly_user_id, status, taken_at)
          VALUES (?, ?, 'missed', NOW())`,
@@ -545,7 +546,7 @@ router.post("/auto-missed/:elderlyId", auth(["caregiver"]), async (req, res) => 
 });
 
 /* ===============================
-   GET TODAY'S SCHEDULES
+   GET TODAY'S SCHEDULES ✅ เพิ่ม taken_at
 ================================= */
 router.get("/today/:elderlyId", auth(["caregiver"]), async (req, res) => {
   try {
@@ -585,16 +586,27 @@ router.get("/today/:elderlyId", auth(["caregiver"]), async (req, res) => {
       return days.includes(String(todayNum)) || days.includes(dayNameMap[todayNum]);
     });
 
+    // ✅ ดึง taken_at ด้วย
     const [logs] = await db.query(
-      `SELECT schedule_id, status FROM intake_logs
+      `SELECT schedule_id, status, taken_at FROM intake_logs
        WHERE elderly_user_id = ? AND DATE(taken_at) = ?`,
       [elderlyId, todayStr]
     );
 
     const logMap = {};
-    for (const log of logs) logMap[log.schedule_id] = log.status;
+    for (const log of logs) {
+      logMap[log.schedule_id] = {
+        status: log.status,
+        taken_at: log.taken_at,
+      };
+    }
 
-    const result = todaySchedules.map((s) => ({ ...s, status: logMap[s.id] || null }));
+    const result = todaySchedules.map((s) => ({
+      ...s,
+      status: logMap[s.id]?.status || null,
+      taken_at: logMap[s.id]?.taken_at || null,
+    }));
+
     res.json({ items: result });
   } catch (err) {
     console.error("TODAY ERROR:", err);
@@ -603,11 +615,11 @@ router.get("/today/:elderlyId", auth(["caregiver"]), async (req, res) => {
 });
 
 /* ===============================
-   LOG INTAKE + Expo Push Notification
+   LOG INTAKE ✅ รับ takenAtISO + บันทึกเวลาจริง
 ================================= */
 router.post("/intake-logs", auth(["caregiver"]), async (req, res) => {
   try {
-    const { scheduleId, elderlyId, status } = req.body;
+    const { scheduleId, elderlyId, status, takenAtISO } = req.body;
     if (!scheduleId || !elderlyId || !status)
       return res.status(400).json({ message: "ข้อมูลไม่ครบ" });
 
@@ -617,18 +629,26 @@ router.post("/intake-logs", auth(["caregiver"]), async (req, res) => {
     );
     if (rel.length === 0) return res.status(403).json({ message: "ไม่มีสิทธิ์" });
 
-    const todayStr = new Date().toLocaleDateString("en-CA");
+    // ✅ ใช้ takenAtISO ถ้ามี ไม่งั้นใช้เวลาปัจจุบัน
+    const takenAt = takenAtISO ? new Date(takenAtISO) : new Date();
+    const mysqlDT = toMysqlDT(takenAt);
+    // ✅ ใช้วันจาก mysqlDT เพื่อ match timezone เดียวกันกับที่บันทึก
+    const dateStr = mysqlDT.substring(0, 10);
+
     const [existing] = await db.query(
       `SELECT id FROM intake_logs WHERE schedule_id = ? AND elderly_user_id = ? AND DATE(taken_at) = ?`,
-      [scheduleId, elderlyId, todayStr]
+      [scheduleId, elderlyId, dateStr]
     );
 
     if (existing.length > 0) {
-      await db.query(`UPDATE intake_logs SET status = ?, taken_at = NOW() WHERE id = ?`, [status, existing[0].id]);
+      await db.query(
+        `UPDATE intake_logs SET status = ?, taken_at = ? WHERE id = ?`,
+        [status, mysqlDT, existing[0].id]
+      );
     } else {
       await db.query(
-        `INSERT INTO intake_logs (schedule_id, elderly_user_id, status, taken_at) VALUES (?, ?, ?, NOW())`,
-        [scheduleId, elderlyId, status]
+        `INSERT INTO intake_logs (schedule_id, elderly_user_id, status, taken_at) VALUES (?, ?, ?, ?)`,
+        [scheduleId, elderlyId, status, mysqlDT]
       );
     }
 
@@ -721,7 +741,7 @@ router.get("/schedules/:id/siblings", auth(["caregiver"]), async (req, res) => {
 });
 
 /* ===============================
-   GET SCHEDULES BY DATE (history)
+   GET SCHEDULES BY DATE (history) ✅ เพิ่ม taken_at
 ================================= */
 router.get("/history/:elderlyId", auth(["caregiver"]), async (req, res) => {
   try {
@@ -763,16 +783,27 @@ router.get("/history/:elderlyId", auth(["caregiver"]), async (req, res) => {
       return days.includes(String(targetDayNum)) || days.includes(dayNameMap[targetDayNum]);
     });
 
+    // ✅ ดึง taken_at ด้วย
     const [logs] = await db.query(
-      `SELECT schedule_id, status FROM intake_logs
+      `SELECT schedule_id, status, taken_at FROM intake_logs
        WHERE elderly_user_id = ? AND DATE(taken_at) = ?`,
       [elderlyId, date]
     );
 
     const logMap = {};
-    for (const log of logs) logMap[log.schedule_id] = log.status;
+    for (const log of logs) {
+      logMap[log.schedule_id] = {
+        status: log.status,
+        taken_at: log.taken_at,
+      };
+    }
 
-    const result = filtered.map((s) => ({ ...s, status: logMap[s.id] || null }));
+    const result = filtered.map((s) => ({
+      ...s,
+      status: logMap[s.id]?.status || null,
+      taken_at: logMap[s.id]?.taken_at || null,
+    }));
+
     res.json({ items: result });
   } catch (err) {
     console.error("HISTORY ERROR:", err);
